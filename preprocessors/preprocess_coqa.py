@@ -8,7 +8,7 @@ import torch
 import tqdm
 from datasets import Dataset
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
-from ..config.config import DATA_DIR
+from config.config import DATA_DIR
 
 def preprocess_coqa(raw_path=f"{DATA_DIR}/coqa-dev-v1.0.json", save_name="coqa_dataset"):
     with open(raw_path, 'r') as infile:

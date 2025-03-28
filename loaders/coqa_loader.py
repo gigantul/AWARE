@@ -1,7 +1,7 @@
 # loaders/coqa_loader.py
 
 from datasets import load_from_disk
-from ..config.config import DATA_DIR
+from config.config import DATA_DIR
 import os
 import urllib.request
 

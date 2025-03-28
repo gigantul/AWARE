@@ -1,7 +1,7 @@
 import os
 from datasets import load_dataset, load_from_disk
 from transformers import AutoTokenizer
-from ..config.config import DATA_DIR
+from config.config import DATA_DIR
 
 
 def preprocess_triviaqa_dataset(model_name, save_path):

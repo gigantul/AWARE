@@ -4,7 +4,7 @@ import os
 import tqdm
 import pandas as pd
 from datasets import load_dataset, DatasetDict, Dataset
-from ..config.config import DATA_DIR
+from config.config import DATA_DIR
 
 def preprocess_triviaqa(save_name="trivia_qa_cleaned"):
     dataset_raw = load_dataset("trivia_qa", "unfiltered.nocontext")

@@ -1,6 +1,6 @@
 import json
 import os
-from ..config.config import DATA_DIR
+from config.config import DATA_DIR
 
 
 def load_sampleqa_dataset(filename="sampleQA.json"):
