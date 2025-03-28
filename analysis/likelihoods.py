@@ -16,14 +16,13 @@ def compute_likelihoods(output):
     logits = torch.stack(output["scores"]).float().cpu()
     num_logits = logits.shape[0]
 
-    # Align labels with logits: keep only the last N tokens where N = # of logits
-    # This trims off prompt tokens and avoids mismatch in likelihood computation
-    labels = output["generated_ids"][-num_logits:].cpu() if num_logits <= len(output["generated_ids"]) else output[
-        "generated_ids"].cpu()
+    # Labels should be one longer than logits (since logits predict next-token)
+    # So we align them like this:
+    labels = output["generated_ids"][-(num_logits + 1):].cpu()
 
-    # Shift logits and labels to align next-token prediction
-    shifted_logits = logits[:-1]
-    shifted_labels = labels
+    # Shift both
+    shifted_logits = logits  # [N]
+    shifted_labels = labels[1:]  # [N], predict token[t+1]
 
     if shifted_logits.size(0) != shifted_labels.size(0):
         print(f"⚠️ Skipping: shifted logits/labels mismatch. logits={shifted_logits.size(0)}, labels={shifted_labels.size(0)}")
