@@ -15,6 +15,8 @@ TEMP=0.001
 
 echo -e "\n🚀 [TEST RUN] Running SAR pipeline on sample QA pairs"
 
+cd..
+
 # Run main pipeline
 python main_pipeline.py \
   --dataset "$DATASET" \
