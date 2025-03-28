@@ -56,9 +56,16 @@ def run_generation(batch: List[Dict], model_name: str, return_logits: bool = Tru
         if return_attentions and hasattr(outputs, 'attentions'):
             attentions = outputs.attentions
             # Apply logarithmic transformation to attention weights
-            log_attention = [torch.log(1 + attention) for attention in attentions]  # Log-normal scale
+            log_attention = []
+            for attention in attentions:
+                if isinstance(attention, torch.Tensor):
+                    log_attention.append(torch.log(1 + attention))  # Apply log-normal scale
+                else:
+                    # If attention is a tuple, unpack and then apply transformation
+                    log_attention.append(torch.log(1 + attention[0]))  # Assuming attention[0] is the tensor
             item["log_attentions"] = log_attention
 
         result.append(item)
 
     return result
+
