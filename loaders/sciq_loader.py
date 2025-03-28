@@ -24,6 +24,7 @@ def preprocess_sciq_dataset(model_name, save_path):
         input_ids = tokenizer(prompt, truncation=False, padding=False)["input_ids"]
         return {
             "input_ids": input_ids,
+            "prompt": prompt,  # 🛠️ Add this line
             "question": example["question"],
             "question_id": example["id"] if "id" in example else example["question"],
             "answer": example["correct_answer"]
