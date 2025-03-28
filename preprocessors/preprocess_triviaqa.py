@@ -4,7 +4,7 @@ import os
 import tqdm
 import pandas as pd
 from datasets import load_dataset, DatasetDict, Dataset
-from config.config import data_dir
+from ..config.config import DATA_DIR
 
 def preprocess_triviaqa(save_name="trivia_qa_cleaned"):
     dataset_raw = load_dataset("trivia_qa", "unfiltered.nocontext")
@@ -24,7 +24,7 @@ def preprocess_triviaqa(save_name="trivia_qa_cleaned"):
         processed[split] = processed_split
 
     final_dataset = DatasetDict(processed)
-    save_path = os.path.join(data_dir, save_name)
+    save_path = os.path.join(DATA_DIR, save_name)
     final_dataset.save_to_disk(save_path)
     print(f"TriviaQA dataset saved to {save_path}")
 

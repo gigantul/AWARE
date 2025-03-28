@@ -1,6 +1,6 @@
 import json
 import os
-from config.config import data_dir
+from ..config.config import DATA_DIR
 
 
 def load_sampleqa_dataset(filename="sampleQA.json"):
@@ -11,7 +11,7 @@ def load_sampleqa_dataset(filename="sampleQA.json"):
     Returns:
         List of dicts with keys: question, answer, id
     """
-    file_path = os.path.join(data_dir, filename)
+    file_path = os.path.join(DATA_DIR, filename)
 
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"[ERROR] Sample QA file not found at {file_path}")

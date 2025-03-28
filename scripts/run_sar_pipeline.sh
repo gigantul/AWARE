@@ -13,6 +13,8 @@ METHODS=("sar" "semantic-entropy" "predictive-entropy" "len-normed-predictive-en
 METRICS=("rougeL_to_target" "bertscore_f1" "sentsim")
 TEMP=0.001
 
+cd ..
+
 # Step 1: Generate results via main_pipeline
 for DATASET in "${DATASETS[@]}"; do
   echo "\n[Running main pipeline on $DATASET]"

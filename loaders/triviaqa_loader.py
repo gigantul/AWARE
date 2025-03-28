@@ -1,7 +1,7 @@
 import os
 from datasets import load_dataset, load_from_disk
 from transformers import AutoTokenizer
-from config.config import data_dir
+from ..config.config import DATA_DIR
 
 
 def preprocess_triviaqa_dataset(model_name, save_path):
@@ -44,7 +44,7 @@ def load_triviaqa_dataset(path=None, model_name=None):
         raise ValueError("[ERROR] Model name must be specified for TriviaQA tokenizer.")
 
     folder_name = f"trivia_qa_{model_name.split('/')[-1]}"
-    path = path or os.path.join(data_dir, folder_name)
+    path = path or os.path.join(DATA_DIR, folder_name)
 
     if not os.path.exists(path):
         preprocess_triviaqa_dataset(model_name, path)
