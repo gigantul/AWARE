@@ -1,5 +1,3 @@
-# models/generator.py
-
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from typing import List, Dict
@@ -55,17 +53,19 @@ def run_generation(batch: List[Dict], model_name: str, return_logits: bool = Tru
 
         if return_attentions and hasattr(outputs, 'attentions'):
             attentions = outputs.attentions
-            # Apply logarithmic transformation to attention weights
+            # Apply logarithmic transformation to attention weights safely
             log_attention = []
             for attention in attentions:
                 if isinstance(attention, torch.Tensor):
+                    # Clamp to avoid log(0) or negative values
+                    attention = torch.clamp(attention, min=1e-10)  # Avoid negative or zero values
                     log_attention.append(torch.log(1 + attention))  # Apply log-normal scale
                 else:
                     # If attention is a tuple, unpack and then apply transformation
-                    log_attention.append(torch.log(1 + attention[0]))  # Assuming attention[0] is the tensor
+                    attention_tensor = torch.clamp(attention[0], min=1e-10)
+                    log_attention.append(torch.log(1 + attention_tensor))  # Assuming attention[0] is the tensor
             item["log_attentions"] = log_attention
 
         result.append(item)
 
     return result
-
