@@ -14,7 +14,12 @@ def compute_likelihoods(output):
 
     # Convert to CPU for safe debugging
     logits = torch.stack(output["scores"]).float().cpu()
-    labels = output["generated_ids"][1:].cpu()
+    num_logits = logits.shape[0]
+
+    # Align labels with logits: keep only the last N tokens where N = # of logits
+    # This trims off prompt tokens and avoids mismatch in likelihood computation
+    labels = output["generated_ids"][-num_logits:].cpu() if num_logits <= len(output["generated_ids"]) else output[
+        "generated_ids"].cpu()
 
     # Shift logits and labels to align next-token prediction
     shifted_logits = logits[:-1]
