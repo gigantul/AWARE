@@ -95,6 +95,6 @@ if __name__ == "__main__":
     parser.add_argument("--similarity_method", type=str, default="sbert")
     parser.add_argument("--sbert_model", type=str, default="all-MiniLM-L6-v2")
     parser.add_argument("--batch_size", type=int, default=32)
-    parser.add_argument("--dataset", type=str, choices=["sciq", "coqa", "triviaqa"], default="sciq")
+    parser.add_argument("--dataset", type=str, choices=["sciq", "coqa", "triviaqa", "sampleqa"], default="sciq")
     args = parser.parse_args()
     main(args)
