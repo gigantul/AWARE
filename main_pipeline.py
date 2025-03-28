@@ -40,7 +40,7 @@ def main(args):
     header_written = False
 
     print(f"[Step 2] Processing QA pairs in batches of {args.batch_size}...")
-    for batch_idx, batch in enumerate(batchify(dataset, args.batch_size)):
+    for batch_idx, batch in enumerate(batchify(list(dataset), args.batch_size)):
         # 1. Run generation
         outputs = run_generation(batch, model_name=args.model, return_logits=True, return_attentions=(args.similarity_method == 'attention'))
 
