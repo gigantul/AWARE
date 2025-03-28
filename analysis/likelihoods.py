@@ -20,6 +20,12 @@ def compute_likelihoods(output: Dict) -> Dict:
 
     log_probs = F.log_softmax(shifted_logits, dim=-1)  # [seq_len - 1, vocab_size]
 
+    if torch.any(shifted_labels >= log_probs.shape[1]) or torch.any(shifted_labels < 0):
+        print("Error: Shifted labels are out of bounds!")
+        print(f"shifted_labels: {shifted_labels}")
+        print(f"log_probs shape: {log_probs.shape}")
+        raise ValueError("Invalid indices in shifted_labels.")
+
     # Token-wise log-likelihood (negative NLL loss)
     token_log_likelihoods = log_probs[range(len(shifted_labels)), shifted_labels]
 

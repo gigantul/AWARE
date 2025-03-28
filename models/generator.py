@@ -69,3 +69,4 @@ def run_generation(batch: List[Dict], model_name: str, return_logits: bool = Tru
         result.append(item)
 
     return result
+
