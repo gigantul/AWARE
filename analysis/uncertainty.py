@@ -37,12 +37,17 @@ def compute_uncertainty_scores(likelihood_dict: Dict, output: Dict, methods: lis
 
             elif method == 'logit_gap':
                 logits = likelihood_dict['logits']
+                if isinstance(logits, tuple):
+                    logits = logits[0]
                 if logits.dim() == 3:
-                    logits = logits[0]  # [seq_len, vocab] if wrapped
-                topk = torch.topk(logits, k=2, dim=-1).values  # [seq_len, 2]
+                    logits = logits[0]
+                if logits.dim() != 2:
+                    print(f"⚠️ Unexpected logits shape: {logits.shape}")
+                    scores['logit_gap'] = float("nan")
+                    continue
+                topk = torch.topk(logits, k=2, dim=-1).values
                 gaps = topk[:, 0] - topk[:, 1]
-                scores['logit_gap'] = -gaps.mean().item()  # larger gap = more confident, so we invert
-
+                scores['logit_gap'] = -gaps.mean().item()
             elif method == 'attentionsar':
                 scores['attentionsar'] = compute_attentionsar_uncertainty(likelihood_dict, output)
 

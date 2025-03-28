@@ -5,7 +5,7 @@ from typing import Dict
 def compute_likelihoods(output):
     # Handle too-short generations
     if len(output.get("scores", [])) < 2:
-        print(f"⚠️ Skipping: not enough tokens to compute likelihoods. Generated: {output['generated_text']}")
+        # print(f"⚠️ Skipping: not enough tokens to compute likelihoods. Generated: {output['generated_text']}")
         return {
             "token_log_likelihoods": torch.tensor([]),
             "entropy_per_token": torch.tensor([]),
@@ -25,7 +25,7 @@ def compute_likelihoods(output):
     shifted_labels = labels[1:]  # [N], predict token[t+1]
 
     if shifted_logits.size(0) != shifted_labels.size(0):
-        print(f"⚠️ Skipping: shifted logits/labels mismatch. logits={shifted_logits.size(0)}, labels={shifted_labels.size(0)}")
+        # print(f"⚠️ Skipping: shifted logits/labels mismatch. logits={shifted_logits.size(0)}, labels={shifted_labels.size(0)}")
         return {
             "token_log_likelihoods": torch.tensor([]),
             "entropy_per_token": torch.tensor([]),
@@ -36,7 +36,7 @@ def compute_likelihoods(output):
 
     vocab_size = log_probs.shape[-1]
     if shifted_labels.max() >= vocab_size or shifted_labels.min() < 0:
-        print(f"⚠️ Skipping: label index out of bounds. max={shifted_labels.max()}, vocab={vocab_size}")
+        # print(f"⚠️ Skipping: label index out of bounds. max={shifted_labels.max()}, vocab={vocab_size}")
         return {
             "token_log_likelihoods": torch.tensor([]),
             "entropy_per_token": torch.tensor([]),
@@ -46,7 +46,7 @@ def compute_likelihoods(output):
     try:
         token_log_likelihoods = log_probs[range(len(shifted_labels)), shifted_labels]
     except IndexError as e:
-        print(f"⚠️ Skipping: IndexError in token log-likelihoods lookup. {str(e)}")
+        # print(f"⚠️ Skipping: IndexError in token log-likelihoods lookup. {str(e)}")
         return {
             "token_log_likelihoods": torch.tensor([]),
             "entropy_per_token": torch.tensor([]),
