@@ -1,3 +1,5 @@
+# loaders/coqa_loader.py
+
 import os
 import json
 import urllib.request
@@ -6,6 +8,9 @@ from transformers import AutoTokenizer
 from config.config import DATA_DIR
 
 def download_raw_coqa():
+    """
+    Downloads the CoQA dev set if it's not already present.
+    """
     url = "https://nlp.stanford.edu/data/coqa/coqa-dev-v1.0.json"
     file_path = os.path.join(DATA_DIR, "coqa-dev-v1.0.json")
     os.makedirs(DATA_DIR, exist_ok=True)
@@ -18,6 +23,9 @@ def download_raw_coqa():
     return file_path
 
 def preprocess_coqa_dataset(model_name, save_path):
+    """
+    Tokenizes and formats the CoQA dev set for model inference.
+    """
     print(f"[INFO] Preprocessing CoQA for model: {model_name}")
     tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=False)
 
