@@ -10,7 +10,6 @@ from loaders.triviaqa_loader import load_triviaqa_dataset
 from loaders.sampleqa_loader import load_sampleqa_dataset
 from models.generator import run_generation
 from analysis.likelihoods import compute_likelihoods
-from analysis.uncertainty import compute_uncertainty_scores
 from analysis.similarity import compute_similarity
 from analysis.correctness import evaluate_response
 from utils.logger import setup_logger
@@ -39,20 +38,25 @@ def main(args):
     save_path = f"results_{args.dataset}.csv"
     header_written = False
 
+    # List of uncertainty methods to compute in one shot
+    uncertainty_methods = ["entropy", "lastde", "lastn_entropy", "logit_gap", "attentionsar", "bertsar"]
+
     print(f"[Step 2] Processing QA pairs in batches of {args.batch_size}...")
     for batch_idx, batch in enumerate(batchify(list(dataset), args.batch_size)):
-        # 1. Run generation
-        outputs = run_generation(batch, model_name=args.model, return_logits=True, return_attentions=(args.similarity_method == 'attention'))
+        # 1. Run generation (now handles uncertainty computation internally)
+        outputs = run_generation(
+            batch,
+            model_name=args.model,
+            return_logits=True,
+            return_attentions=(args.similarity_method == 'attention'),
+            uncertainty_methods=uncertainty_methods
+        )
 
         for i, (sample, output) in enumerate(zip(batch, outputs)):
-            # 2. Compute token-level likelihoods and uncertainty
-            likelihoods = compute_likelihoods(output)
-            uncertainty = compute_uncertainty_scores(likelihoods, method=args.uncertainty_method)
-
-            # 3. Compute correctness
+            # 2. Compute correctness
             correctness = evaluate_response(sample, output)
 
-            # 4. Compute similarity (if needed for this sample)
+            # 3. Compute similarity (optional)
             similarity_score = None
             if args.similarity_method == 'attention':
                 similarity_score = compute_similarity(
@@ -60,18 +64,23 @@ def main(args):
                     method='attention'
                 )
 
-            # 5. Store minimal result
+            # 4. Store full row with multiple uncertainty scores
             row = {
                 'id': batch_idx * args.batch_size + i,
                 'question': sample['question'],
                 'generated_answer': output['generated_text'],
-                'uncertainty': uncertainty['score'],
                 'correct': correctness,
                 'similarity_score': similarity_score if similarity_score is not None else 'NA'
             }
+
+            # Add all uncertainty scores to the row
+            uncertainty_scores = output.get("uncertainty_scores", {})
+            for method in uncertainty_methods:
+                row[f"uncertainty_{method}"] = uncertainty_scores.get(method, "NA")
+
             results.append(row)
 
-            # 6. Periodically save
+            # 5. Periodically save to CSV
             with open(save_path, mode='a', newline='') as f:
                 writer = csv.DictWriter(f, fieldnames=row.keys())
                 if not header_written:
@@ -79,7 +88,7 @@ def main(args):
                     header_written = True
                 writer.writerow(row)
 
-        # 7. Clear memory
+        # 6. Free up memory
         del outputs, batch
         torch.cuda.empty_cache()
 
@@ -91,7 +100,7 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", type=str, default=MODEL_NAME)
-    parser.add_argument("--uncertainty_method", type=str, default="lastde")
+    parser.add_argument("--uncertainty_method", type=str, default="lastde")  # kept for legacy
     parser.add_argument("--similarity_method", type=str, default="sbert")
     parser.add_argument("--sbert_model", type=str, default="all-MiniLM-L6-v2")
     parser.add_argument("--batch_size", type=int, default=32)

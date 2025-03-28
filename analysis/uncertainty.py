@@ -7,50 +7,68 @@ from sentence_transformers import SentenceTransformer, util
 # Cache SBERT model to avoid reloading
 _sbert_cache = {}
 
-def compute_uncertainty_scores(likelihood_dict: Dict, method: str = 'lastde') -> Dict:
+def compute_uncertainty_scores(likelihood_dict: Dict, output: Dict, methods: list = ['entropy', 'lastde', 'lastn_entropy', 'logit_gap', 'attentionsar', 'bertsar']) -> Dict:
     """
-    Compute scalar uncertainty score from token-level likelihoods.
+    Compute scalar uncertainty scores from token-level likelihoods for multiple methods.
 
     Args:
         likelihood_dict: Dict with keys like 'token_log_likelihoods', 'entropy_per_token', etc.
-        method: which metric to use: 'lastde', 'entropy', 'logit_gap', etc.
+        output: Dict with model output (e.g., generated text, attention weights)
+        methods: List of methods to compute, e.g., ['entropy', 'lastde', 'logit_gap', 'attentionsar', 'bertsar']
 
     Returns:
-        Dict with a single key: 'score', and optionally intermediates.
+        Dict with keys corresponding to the methods, each with its computed score.
     """
-    if method == 'entropy':
-        score = likelihood_dict['entropy_per_token'].mean()
-    elif method == 'lastde':
-        ent = likelihood_dict['entropy_per_token']
-        score = ent[-1] if ent.numel() > 0 else torch.tensor(float("nan"))
-    elif method == 'logit_gap':
-        logits = likelihood_dict['logits']
-        if logits.dim() == 3:
-            logits = logits[0]  # [seq_len, vocab] if wrapped
-    elif method == "attentionsar":
-        return compute_attentionsar_uncertainty(likelihoods, output)
-    elif method == "bertsar":
-        return compute_bert_sar_uncertainty(likelihoods, output)
+    scores = {}
 
-        # logit gap = top1 - top2 per token
-        topk = torch.topk(logits, k=2, dim=-1).values  # [seq_len, 2]
-        gaps = topk[:, 0] - topk[:, 1]
-        score = -gaps.mean()  # larger gap = more confident, so we invert
-    else:
-        raise NotImplementedError(f"Unknown uncertainty method: {method}")
+    for method in methods:
+        try:
+            if method == 'entropy':
+                scores['entropy'] = likelihood_dict['entropy_per_token'].mean().item()
 
-    return {"score": score.item()}
+            elif method == 'lastde':
+                ent = likelihood_dict['entropy_per_token']
+                scores['lastde'] = ent[-1].item() if ent.numel() > 0 else float("nan")
 
+            elif method == 'lastn_entropy':
+                n = 10  # Number of tokens for lastn_entropy, this can be passed as a parameter if needed
+                ent = likelihood_dict['entropy_per_token']
+                scores['lastn_entropy'] = ent[-n:].mean().item() if ent.numel() >= n else ent.mean().item()
 
+            elif method == 'logit_gap':
+                logits = likelihood_dict['logits']
+                if logits.dim() == 3:
+                    logits = logits[0]  # [seq_len, vocab] if wrapped
+                topk = torch.topk(logits, k=2, dim=-1).values  # [seq_len, 2]
+                gaps = topk[:, 0] - topk[:, 1]
+                scores['logit_gap'] = -gaps.mean().item()  # larger gap = more confident, so we invert
+
+            elif method == 'attentionsar':
+                scores['attentionsar'] = compute_attentionsar_uncertainty(likelihood_dict, output)
+
+            elif method == 'bertsar':
+                scores['bertsar'] = compute_bert_sar_uncertainty(likelihood_dict, output)
+
+            else:
+                print(f"⚠️ Unknown uncertainty method: {method}")
+                scores[method] = float("nan")
+
+        except IndexError as e:
+            print(f"⚠️ Skipping IndexError: {e}")
+            scores[method] = float("nan")  # Return NaN if there's an index error
+
+    return scores
+
+# Helper functions for attentionsar and bertsar
 def compute_attentionsar_uncertainty(likelihoods, output):
     log_likelihoods = likelihoods["token_log_likelihoods"]
     if log_likelihoods.numel() == 0:
-        return {"score": float("nan")}
+        return float("nan")
 
     attentions = output.get("log_attentions", None)
     if not attentions or not isinstance(attentions, list):
         print("⚠️ No valid attention scores for SAR. Falling back to mean log-likelihood.")
-        return {"score": -log_likelihoods.mean().item()}
+        return -log_likelihoods.mean().item()
 
     # Use attention from the last layer
     last_layer_attn = attentions[-1]  # shape: [batch, heads, tgt_len, src_len]
@@ -59,10 +77,10 @@ def compute_attentionsar_uncertainty(likelihoods, output):
 
     if last_layer_attn.ndim != 4:
         print("⚠️ Unexpected attention shape:", last_layer_attn.shape)
-        return {"score": -log_likelihoods.mean().item()}
+        return -log_likelihoods.mean().item()
 
     # Average over heads and get attention on generated tokens only
-    attn_weights = attn_weights / attn_weights.sum().clamp(min=1e-6)  # shape: [tgt_len, src_len]
+    attn_weights = last_layer_attn.mean(dim=1).mean(dim=0)  # [tgt_len, src_len]
 
     # Take the diagonal as a proxy for self-relevance (token attends to itself)
     diag_attn = torch.diagonal(attn_weights, dim1=0, dim2=1)  # shape: [seq_len]
@@ -74,12 +92,12 @@ def compute_attentionsar_uncertainty(likelihoods, output):
     # Compute SAR as attention-weighted negative log-likelihood
     sar_score = -(log_likelihoods[:len(attn_weights)] * attn_weights).sum().item()
 
-    return {"score": sar_score}
+    return sar_score
 
 def compute_bert_sar_uncertainty(likelihoods, output, model_name="all-MiniLM-L6-v2"):
     log_likelihoods = likelihoods["token_log_likelihoods"]
     if log_likelihoods.numel() == 0:
-        return {"score": float("nan")}
+        return float("nan")
 
     if model_name not in _sbert_cache:
         _sbert_cache[model_name] = SentenceTransformer(model_name)
@@ -105,7 +123,7 @@ def compute_bert_sar_uncertainty(likelihoods, output, model_name="all-MiniLM-L6-
         # Weighted negative log-likelihood
         score = -(log_likelihoods[:len(weights)] * weights).sum().item()
 
-        return {"score": score}
+        return score
     except Exception as e:
         print(f"⚠️ BERT-SAR error: {e}")
-        return {"score": float("nan")}
+        return float("nan")
