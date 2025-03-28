@@ -4,7 +4,7 @@ import datetime
 import logging
 import os
 
-def setup_logger(log_file: str = None, level=logging.INFO):
+def setup_logger(log_file: str = "errorlog.log", level=logging.INFO):
     logger = logging.getLogger("SAR")
     logger.setLevel(level)
 

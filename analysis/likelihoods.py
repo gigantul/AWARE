@@ -4,37 +4,51 @@ import torch
 import torch.nn.functional as F
 from typing import Dict
 
+def compute_likelihoods(output):
+    # Handle too-short generations
+    if len(output.get("scores", [])) < 2:
+        print(f"⚠️ Skipping: not enough tokens to compute likelihoods. Generated: {output['generated_text']}")
+        return {
+            "token_log_likelihoods": torch.tensor([]),
+            "entropy_per_token": torch.tensor([]),
+            "log_probs": torch.tensor([])
+        }
 
-def compute_likelihoods(output: Dict) -> Dict:
-    """
-    Compute log-likelihoods and entropy from logits and input_ids.
-    Assumes logits and input_ids are returned from run_generation().
-    """
-    logits = torch.stack(output["scores"]).squeeze(1)  # [seq_len, vocab_size]
-    input_ids = output["generated_ids"]
-    vocab_size = logits.shape[-1]
+    # Convert to CPU for safe debugging
+    logits = torch.stack(output["scores"]).float().cpu()
+    labels = output["generated_ids"][1:].cpu()
 
-    # Align shapes: remove the last token from logits, and first token from targets
-    shifted_logits = logits[:-1]  # [seq_len - 1, vocab_size]
-    shifted_labels = input_ids[1:]  # [seq_len - 1]
+    # Shift logits and labels to align next-token prediction
+    shifted_logits = logits[:-1]
+    shifted_labels = labels
 
-    log_probs = F.log_softmax(shifted_logits, dim=-1)  # [seq_len - 1, vocab_size]
+    if shifted_logits.size(0) != shifted_labels.size(0):
+        print(f"⚠️ Skipping: shifted logits/labels mismatch. logits={shifted_logits.size(0)}, labels={shifted_labels.size(0)}")
+        return {
+            "token_log_likelihoods": torch.tensor([]),
+            "entropy_per_token": torch.tensor([]),
+            "log_probs": torch.tensor([])
+        }
 
-    if torch.any(shifted_labels >= log_probs.shape[1]) or torch.any(shifted_labels < 0):
-        print("Error: Shifted labels are out of bounds!")
-        print(f"shifted_labels: {shifted_labels}")
-        print(f"log_probs shape: {log_probs.shape}")
-        raise ValueError("Invalid indices in shifted_labels.")
+    log_probs = torch.nn.functional.log_softmax(shifted_logits, dim=-1)
 
-    # Token-wise log-likelihood (negative NLL loss)
+    vocab_size = log_probs.shape[-1]
+    if shifted_labels.max() >= vocab_size or shifted_labels.min() < 0:
+        print(f"⚠️ Skipping: label index out of bounds. max={shifted_labels.max()}, vocab={vocab_size}")
+        return {
+            "token_log_likelihoods": torch.tensor([]),
+            "entropy_per_token": torch.tensor([]),
+            "log_probs": log_probs
+        }
+
+    # Select token-level log-probability
     token_log_likelihoods = log_probs[range(len(shifted_labels)), shifted_labels]
 
-    # Token-wise entropy
+    # Compute entropy per token
     entropy_per_token = -torch.sum(torch.exp(log_probs) * log_probs, dim=-1)
 
     return {
-        "token_log_likelihoods": token_log_likelihoods.detach().cpu(),
-        "entropy_per_token": entropy_per_token.detach().cpu(),
-        "logits": logits.detach().cpu(),
-        "input_ids": input_ids.detach().cpu()
+        "token_log_likelihoods": token_log_likelihoods,
+        "entropy_per_token": entropy_per_token,
+        "log_probs": log_probs
     }
