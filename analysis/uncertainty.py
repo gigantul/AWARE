@@ -21,8 +21,8 @@ def compute_uncertainty_scores(likelihood_dict: Dict, method: str = 'lastde') ->
     if method == 'entropy':
         score = likelihood_dict['entropy_per_token'].mean()
     elif method == 'lastde':
-        # Last token entropy (tail token)
-        score = likelihood_dict['entropy_per_token'][-1]
+        ent = likelihood_dict['entropy_per_token']
+        score = ent[-1] if ent.numel() > 0 else torch.tensor(float("nan"))
     elif method == 'logit_gap':
         logits = likelihood_dict['logits']
         if logits.dim() == 3:
@@ -62,7 +62,7 @@ def compute_attentionsar_uncertainty(likelihoods, output):
         return {"score": -log_likelihoods.mean().item()}
 
     # Average over heads and get attention on generated tokens only
-    attn_weights = last_layer_attn[0].mean(dim=0)  # shape: [tgt_len, src_len]
+    attn_weights = attn_weights / attn_weights.sum().clamp(min=1e-6)  # shape: [tgt_len, src_len]
 
     # Take the diagonal as a proxy for self-relevance (token attends to itself)
     diag_attn = torch.diagonal(attn_weights, dim1=0, dim2=1)  # shape: [seq_len]
@@ -100,7 +100,7 @@ def compute_bert_sar_uncertainty(likelihoods, output, model_name="all-MiniLM-L6-
 
         # Normalize
         similarities = similarities[:len(log_likelihoods)]
-        weights = similarities / similarities.sum()
+        weights = similarities / similarities.sum().clamp(min=1e-6)
 
         # Weighted negative log-likelihood
         score = -(log_likelihoods[:len(weights)] * weights).sum().item()

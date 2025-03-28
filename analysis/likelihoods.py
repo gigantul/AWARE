@@ -1,5 +1,3 @@
-# analysis/likelihoods.py
-
 import torch
 import torch.nn.functional as F
 from typing import Dict
@@ -41,10 +39,16 @@ def compute_likelihoods(output):
             "log_probs": log_probs
         }
 
-    # Select token-level log-probability
-    token_log_likelihoods = log_probs[range(len(shifted_labels)), shifted_labels]
+    try:
+        token_log_likelihoods = log_probs[range(len(shifted_labels)), shifted_labels]
+    except IndexError as e:
+        print(f"⚠️ Skipping: IndexError in token log-likelihoods lookup. {str(e)}")
+        return {
+            "token_log_likelihoods": torch.tensor([]),
+            "entropy_per_token": torch.tensor([]),
+            "log_probs": log_probs
+        }
 
-    # Compute entropy per token
     entropy_per_token = -torch.sum(torch.exp(log_probs) * log_probs, dim=-1)
 
     return {

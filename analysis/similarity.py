@@ -24,10 +24,13 @@ def get_attention_weights(model_outputs: Dict, layer: int = -1, head: int = None
 
 
 def get_attention_based_similarity(token_importances: torch.Tensor) -> torch.Tensor:
+    if token_importances.shape[1] <= 1:
+        print("⚠️ Skipping: Not enough tokens for attention-based similarity.")
+        return torch.tensor([])  # or return None or np.nan
+
     normed = token_importances / token_importances.norm(dim=1, keepdim=True)
     similarity = torch.matmul(normed, normed.T)
     return similarity.cpu().numpy()
-
 
 def compute_similarity(sentences: List[str] = None, model_outputs: Dict = None, method: str = 'sbert', **kwargs):
     """
