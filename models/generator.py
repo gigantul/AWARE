@@ -100,9 +100,9 @@ def run_generation(
                             output_attentions=True,
                             return_dict=True
                         )
-                        full_logits = forward_out.logits.squeeze(0)
-                        full_attentions = forward_out.attentions
-                        embedding_matrix = model.get_input_embeddings().weight.detach().to(full_logits.device)
+                        full_logits = forward_out.logits.squeeze(0).to(torch.float32)
+                        full_attentions = [a.to(torch.float32) for a in forward_out.attentions]
+                        embedding_matrix = model.get_input_embeddings().weight.detach().to(full_logits.device).to(torch.float32)
 
                     aware_likelihood_dict = {
                         "logits": full_logits,

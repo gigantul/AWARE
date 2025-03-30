@@ -70,9 +70,8 @@ def compute_aware_uncertainty(likelihoods, output):
         print("⚠️ Missing logits, attention, or embeddings for AWARE.")
         return float("nan")
 
-    # 🔧 Force device match
-    logits = logits.to(embedding_matrix.device)
-    embedding_matrix = embedding_matrix.to(logits.device)
+    logits = logits.float()
+    embedding_matrix = embedding_matrix.float()
 
     last_attn = attentions[-1]
     if isinstance(last_attn, tuple):
