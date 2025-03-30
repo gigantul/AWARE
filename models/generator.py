@@ -76,10 +76,12 @@ def run_generation(
             "entropy_per_token": sample.get("entropy_per_token", torch.tensor([])),
             "logits": outputs.scores if return_logits else None
         }
+
         model_output = {
             "generated_text": decoded[i],
             "input_text": prompts[i],
-            "log_attentions": item.get("log_attentions", None)
+            "log_attentions": item.get("log_attentions", None),
+            "embedding_matrix": model.get_input_embeddings().weight.detach()
         }
 
         # Compute uncertainty scores if requested
