@@ -64,9 +64,19 @@ def compute_aware_uncertainty(likelihoods, output):
     attentions = output.get("log_attentions")
     embedding_matrix = output.get("embedding_matrix")
 
+    # 🔍 Debug Print
+    print("📦 AWARE Debug — Input Check:")
+    print(f" - logits: {'✅' if logits is not None else '❌'}")
+    print(f" - logits shape: {getattr(logits, 'shape', 'N/A')}")
+    print(f" - attentions: {'✅' if attentions is not None else '❌'}")
+    print(f" - embedding_matrix: {'✅' if embedding_matrix is not None else '❌'}")
+    print(f" - embedding shape: {getattr(embedding_matrix, 'shape', 'N/A')}")
+    print("=" * 50)
+
     if logits is None or attentions is None or embedding_matrix is None:
-        print("⚠️ Missing logits, attention, or embeddings for ESE.")
+        print("⚠️ Missing logits, attention, or embeddings for AWARE.")
         return float("nan")
+
 
     if isinstance(logits, tuple): logits = logits[0]
     if logits.dim() == 3: logits = logits[0]
