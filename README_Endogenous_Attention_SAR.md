@@ -1,26 +1,29 @@
-# Endogenous Attention-Weighted SAR: A Clean and Efficient Framework for Semantic-Aware Uncertainty in LLMs
+# AWARE: Attention-Weighted and Reduced Entropy
+### A Clean and Efficient Framework for Semantic-Aware Uncertainty in LLMs
 
 ## 📌 Summary
-This repository re-implements and extends the core methodology of "Shifting Attention to Relevance (SAR)" by Duan et al., offering a:
+This repository re-implements and extends the core methodology of *"Shifting Attention to Relevance (SAR)"* by Duan et al., introducing:
 
-- ✅ **Modular, memory-efficient SAR pipeline**
-- ✅ **Endogenous attention-weighted token importance** (instead of SBERT)
-- ✅ **Native support for multiple uncertainty measures** (SAR, PE, SE, LN-PE, etc.)
-- ✅ Clean integration with HuggingFace and minimal external dependencies
+- ✅ **A modular, memory-efficient SAR-based pipeline**
+- ✅ **Endogenous attention-weighted token importance** (no external SBERT)
+- ✅ **Dimensionally-collapsed logit entropy** for semantically-refined uncertainty
+- ✅ **Support for multiple uncertainty metrics** (SAR, PE, SE, LN-PE, and more)
+- ✅ **Minimal dependencies with HuggingFace-native integration**
 
-> This version serves as a reproducible and extensible base for research in uncertainty estimation, semantic relevance, and token-level confidence in LLM generations.
+> This implementation serves as a reproducible and extensible foundation for research on uncertainty estimation, semantic relevance, and token-level confidence in LLMs — now refined into **AWARE**, a novel measure based on Attention-Weighted and Reduced Entropy.
 
 ---
 
 ## 🔬 Key Contributions
-- **Main Pipeline** (`main_pipeline.py`): Unified, batch-based processing for any dataset (SciQ, TriviaQA, CoQA)
-- **Plug-in Uncertainty Modules**: Supports SAR, token-SAR, sentence-SAR, PE, SE, semantic entropy
-- **Replaces SBERT with Endogenous Attention Weights**: Token importance derived from model internals (attention heads), increasing interpretability and efficiency
-- **Reproducible Figures & Tables**: Scripts replicate Duan et al.'s Table 1–4, Figure 5–6
+- **Main Pipeline** (`main_pipeline.py`): Unified, batch-based processing for datasets like SciQ, TriviaQA, and CoQA
+- **Plug-in Uncertainty Modules**: Including SAR, token-SAR, sentence-SAR, PE, SE, semantic entropy, and more
+- **Endogenous Token Importance via Attention Weights**: Replacing SBERT with internal model attention for interpretable and efficient weighting
+- **Collapsed Logit Space for Semantic Refinement**: Reducing output vocabulary to task-relevant dimensions for more accurate entropy calculation
+- **Reproducible Experiments**: Scripts replicate Duan et al.’s Table 1–4 and Figure 5–6
 
 ---
 
-## 📁 Structure
+## 📁 Repository Structure
 
 ```bash
 ├── main_pipeline.py
@@ -40,61 +43,69 @@ This repository re-implements and extends the core methodology of "Shifting Atte
 ├── utils/
 │   └── logger.py
 ├── scripts/
-│   └── run_sar_pipeline.sh
+│   └── run_all_uncertainty.sh
 └── results/  # output CSVs + pickles
 ```
 
 ---
 
-## 🚀 How to Run
+## 🚀 Getting Started
+
+To reproduce results:
 
 ```bash
 bash scripts/run_sar_pipeline.sh
 ```
+
 This will:
-- Run SAR-style generation and analysis for `sciq` and `triviaqa`
-- Compute uncertainty metrics
+- Run generation + uncertainty estimation on SciQ and TriviaQA
+- Compute uncertainty metrics across methods
 - Generate correctness labels
 
-Output files (CSV + pickle) are saved under `results/` and `output_dir/`.
+Outputs will be saved to `results/` and `output_dir/`.
 
 ---
 
-## 📊 Replicated Tables and Figures
+## 📊 Replicated Experiments
 
-| Table/Figure | Covered? | Location |
-|--------------|----------|----------|
-| Table 1 (SciQ Accuracy)   | ✅ | `uncertainty.py` output
-| Table 2 (TriviaQA)        | ✅ | `uncertainty.py`
-| Table 3/4 (AUC/Correlation) | ✅ | `uncertainty.py`
-| Figure 5 (Distribution)   | ⚠️ (script optional) | TBD
-| Figure 6 (Token entropy/importance) | ⚠️ (visual script WIP) | TBD
+| Table/Figure | Status | Location |
+|--------------|--------|----------|
+| Table 1: SciQ Accuracy            | ✅ | `uncertainty.py`
+| Table 2: TriviaQA Accuracy       | ✅ | `uncertainty.py`
+| Table 3/4: AUC / Correlation     | ✅ | `uncertainty.py`
+| Figure 5: Uncertainty Distributions | ⚠️ (optional script) | TBD
+| Figure 6: Token Entropy & Importance | ⚠️ (WIP visualization) | TBD
 
 ---
 
 ## 👥 Authorship & Contributions
 
-**Original Code & Pipeline:** [Your Name Here]  
-**Paper Reference:** Duan et al., "Shifting Attention to Relevance: A Framework for Evaluating Semantic Uncertainty in LLMs" (2023)
+**Core Pipeline & Code:** Kwanhee Lee
 
-If this code is extended in future work (e.g., additional datasets, interpretability tools, or visualizations), **new contributors may be added to later arXiv versions or journal submissions**.
+**Original Methodology Reference:**  
+Duan et al., *"Shifting Attention to Relevance: A Framework for Evaluating Semantic Uncertainty in LLMs"* (2023)
+
+> Future contributions (e.g., new datasets, entropy variants, visualization tools) are welcome and may be reflected in updated arXiv or journal versions.
 
 ---
 
 ## 📝 arXiv Posting Plan
-- Post v1 as sole author
-- Invite collaborators to contribute to v2 (e.g., new metrics, datasets, visualization)
-- Update authorship with consent upon arXiv resubmission
+
+- v1: Solo author submission with AWARE methodology + SAR replication
+- v2+: Open to collaborators (metrics, interpretability, applications)
+- Authorship will reflect meaningful contributions with prior consent
 
 ---
 
 ## 📮 Contact
-Interested in collaborating or reusing this? Feel free to reach out.
 
-- Email: your.email@example.com
-- GitHub: [your-handle]
+Interested in collaborating, reusing, or building on this work?
+
+- Email: gigantul@korea.ac.kr
+- GitHub: https://github.com/gigantul/endogenous_attention_sar
 
 ---
 
 ## 📚 Citation
-BibTeX coming after arXiv upload. Stay tuned.
+
+BibTeX and full citation will be included after the first arXiv upload. Stay tuned!

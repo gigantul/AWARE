@@ -39,7 +39,7 @@ def main(args):
     header_written = False
 
     # List of uncertainty methods to compute in one shot
-    uncertainty_methods = ["entropy", "lastde", "lastn_entropy", "logit_gap", "bertsar", "ese"]
+    uncertainty_methods = ["entropy", "lastde", "lastn_entropy", "logit_gap", "bertsar", "aware"]
 
     print(f"[Step 2] Processing QA pairs in batches of {args.batch_size}...")
     for batch_idx, batch in enumerate(batchify(list(dataset), args.batch_size)):

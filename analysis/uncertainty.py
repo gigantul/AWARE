@@ -1,4 +1,4 @@
-# Updated uncertainty.py with ESE support (PCA-based epistemic entropy, edge-case safe)
+# Updated uncertainty.py with AWARE support (PCA-based epistemic entropy, edge-case safe)
 import torch
 from typing import Dict
 from sentence_transformers import SentenceTransformer, util
@@ -59,7 +59,7 @@ def collapse_logits_by_semantic_axes(logits, embedding_matrix, top_k=200, varian
     return collapsed_probs_tensor
 
 # --- NEW: ESE computation ---
-def compute_ese_uncertainty(likelihoods, output):
+def compute_aware_uncertainty(likelihoods, output):
     logits = likelihoods.get("logits")
     attentions = output.get("log_attentions")
     embedding_matrix = output.get("embedding_matrix")
@@ -79,7 +79,7 @@ def compute_ese_uncertainty(likelihoods, output):
 
     attn_weights = last_attn.mean(dim=1).squeeze(0)  # [tgt, src]
     probs = F.softmax(logits, dim=-1)
-    ese_scores = []
+    aware_scores = []
 
     for t in range(probs.shape[0]):
         # Handle t=0 (no previous context): uniform self-weight
@@ -89,12 +89,12 @@ def compute_ese_uncertainty(likelihoods, output):
 
         collapsed = collapse_logits_by_semantic_axes(weighted_logit, embedding_matrix)
         entropy = -(collapsed * torch.log(collapsed.clamp(min=1e-9))).sum()
-        ese_scores.append(entropy)
+        aware_scores.append(entropy)
 
-    if not ese_scores:
+    if not aware_scores:
         return float("nan")
 
-    return torch.stack(ese_scores).mean().item()
+    return torch.stack(aware_scores).mean().item()
 
 
 def compute_uncertainty_scores(likelihood_dict: Dict, output: Dict, methods: list = ['entropy', 'lastde', 'lastn_entropy', 'logit_gap', 'attentionsar', 'bertsar']) -> Dict:
@@ -132,8 +132,8 @@ def compute_uncertainty_scores(likelihood_dict: Dict, output: Dict, methods: lis
             elif method == 'bertsar':
                 scores['bertsar'] = compute_bert_sar_uncertainty(likelihood_dict, output)
 
-            elif method == 'ese':
-                scores['ese'] = compute_ese_uncertainty(likelihood_dict, output)
+            elif method == 'aware':
+                scores['aware'] = compute_aware_uncertainty(likelihood_dict, output)
 
             else:
                 print(f"⚠️ Unknown uncertainty method: {method}")
