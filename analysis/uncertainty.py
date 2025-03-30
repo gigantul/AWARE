@@ -66,47 +66,36 @@ def compute_aware_uncertainty(likelihoods, output):
     attentions = output.get("log_attentions")
     embedding_matrix = output.get("embedding_matrix")
 
-    # 🔍 Debug Print
-    print("📦 AWARE Debug — Input Check:")
-    print(f" - logits: {'✅' if logits is not None else '❌'}")
-    print(f" - logits shape: {getattr(logits, 'shape', 'N/A')}")
-    print(f" - attentions: {'✅' if attentions is not None else '❌'}")
-    print(f" - embedding_matrix: {'✅' if embedding_matrix is not None else '❌'}")
-    print(f" - embedding shape: {getattr(embedding_matrix, 'shape', 'N/A')}")
-    print("=" * 50)
-
     if logits is None or attentions is None or embedding_matrix is None:
         print("⚠️ Missing logits, attention, or embeddings for AWARE.")
         return float("nan")
 
-
-    if isinstance(logits, tuple): logits = logits[0]
-    if logits.dim() == 3: logits = logits[0]
+    # 🔧 Force device match
+    logits = logits.to(embedding_matrix.device)
+    embedding_matrix = embedding_matrix.to(logits.device)
 
     last_attn = attentions[-1]
-    if isinstance(last_attn, tuple): last_attn = last_attn[0]
+    if isinstance(last_attn, tuple):
+        last_attn = last_attn[0]
     if last_attn.ndim != 4:
         print("⚠️ Unexpected attention shape.")
         return float("nan")
 
     attn_weights = last_attn.mean(dim=1).squeeze(0)  # [tgt, src]
-    probs = F.softmax(logits, dim=-1)
-    aware_scores = []
+    probs = torch.softmax(logits, dim=-1).to(logits.device)
 
+    aware_scores = []
     for t in range(probs.shape[0]):
-        # Handle t=0 (no previous context): uniform self-weight
-        attn_vec = attn_weights[t, :t+1] if t > 0 else torch.ones(1)
+        attn_vec = attn_weights[t, :t+1] if t > 0 else torch.ones(1, device=logits.device)
         attn_vec = attn_vec / attn_vec.sum().clamp(min=1e-6)
         weighted_logit = probs[:t+1].transpose(0, 1) @ attn_vec  # [vocab_size]
+        weighted_logit = weighted_logit.to(embedding_matrix.device)  # 🔧 critical fix
 
         collapsed = collapse_logits_by_semantic_axes(weighted_logit, embedding_matrix)
         entropy = -(collapsed * torch.log(collapsed.clamp(min=1e-9))).sum()
         aware_scores.append(entropy)
 
-    if not aware_scores:
-        return float("nan")
-
-    return torch.stack(aware_scores).mean().item()
+    return torch.stack(aware_scores).mean().item() if aware_scores else float('nan')
 
 
 def compute_uncertainty_scores(likelihood_dict: Dict, output: Dict, methods: list = ['entropy', 'lastde', 'lastn_entropy', 'logit_gap', 'attentionsar', 'bertsar']) -> Dict:
