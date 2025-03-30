@@ -58,7 +58,7 @@ def collapse_logits_by_semantic_axes(logits, embedding_matrix, top_k=200, varian
     collapsed_probs_tensor = collapsed_probs_tensor / collapsed_probs_tensor.sum().clamp(min=1e-9)
     return collapsed_probs_tensor
 
-# --- NEW: ESE computation ---
+
 def compute_aware_uncertainty(likelihoods, output):
     logits = likelihoods.get("logits")
     attentions = output.get("log_attentions")
@@ -145,5 +145,74 @@ def compute_uncertainty_scores(likelihood_dict: Dict, output: Dict, methods: lis
 
     return scores
 
-# Reuse from original...
 # compute_attentionsar_uncertainty, compute_bert_sar_uncertainty remain unchanged
+# Helper functions for attentionsar and bertsar
+def compute_attentionsar_uncertainty(likelihoods, output):
+    log_likelihoods = likelihoods["token_log_likelihoods"]
+    if log_likelihoods.numel() == 0:
+        return float("nan")
+
+    attentions = output.get("log_attentions", None)
+    if not attentions or not isinstance(attentions, list):
+        print("⚠️ No valid attention scores for SAR. Falling back to mean log-likelihood.")
+        return -log_likelihoods.mean().item()
+
+    # Use attention from the last layer: [batch, heads, tgt_len, src_len]
+    last_layer_attn = attentions[-1]
+    if isinstance(last_layer_attn, tuple):
+        last_layer_attn = last_layer_attn[0]
+
+    if last_layer_attn.ndim != 4:
+        print("⚠️ Unexpected attention shape:", last_layer_attn.shape)
+        return -log_likelihoods.mean().item()
+
+    # Mean over heads → [tgt_len, src_len]
+    attn_weights = last_layer_attn.mean(dim=1).squeeze(0)  # Remove batch dim
+
+    # For each token t, compute attention-weighted uncertainty from tokens 0 to t-1
+    weighted_ll = []
+    for t in range(1, len(log_likelihoods)):
+        past_attn = attn_weights[t, :t]  # attention from token t to previous tokens
+        past_attn = past_attn / past_attn.sum()  # normalize
+        past_ll = log_likelihoods[:t]
+        weighted_ll.append((past_ll * past_attn).sum())
+
+    # Optional: add token 0's unweighted log-likelihood (no context)
+    weighted_ll = [log_likelihoods[0]] + weighted_ll
+
+    sar_score = -torch.stack(weighted_ll).mean().item()
+    return sar_score
+
+def compute_bert_sar_uncertainty(likelihoods, output, model_name="all-MiniLM-L6-v2"):
+    log_likelihoods = likelihoods["token_log_likelihoods"]
+    if log_likelihoods.numel() == 0:
+        return float("nan")
+
+    if model_name not in _sbert_cache:
+        _sbert_cache[model_name] = SentenceTransformer(model_name)
+    sbert = _sbert_cache[model_name]
+
+    try:
+        # Get the tokens (optional fallback)
+        input_text = output.get("input_text", "")
+        answer_text = output.get("generated_text", "")
+
+        # Tokenize into individual words (rough approximation)
+        tokens = input_text.split()
+        token_embeddings = sbert.encode(tokens, convert_to_tensor=True, normalize_embeddings=True)
+        answer_embedding = sbert.encode(answer_text, convert_to_tensor=True, normalize_embeddings=True)
+
+        # Compute cosine similarity between each token and the answer
+        similarities = util.pytorch_cos_sim(token_embeddings, answer_embedding).squeeze()
+
+        # Normalize
+        similarities = similarities[:len(log_likelihoods)]
+        weights = similarities / similarities.sum().clamp(min=1e-6)
+
+        # Weighted negative log-likelihood
+        score = -(log_likelihoods[:len(weights)] * weights).sum().item()
+
+        return score
+    except Exception as e:
+        print(f"⚠️ BERT-SAR error: {e}")
+        return float("nan")
