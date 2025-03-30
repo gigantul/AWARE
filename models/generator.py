@@ -102,7 +102,7 @@ def run_generation(
                         )
                         full_logits = forward_out.logits.squeeze(0)
                         full_attentions = forward_out.attentions
-                        embedding_matrix = model.get_input_embeddings().weight.detach()
+                        embedding_matrix = model.get_input_embeddings().weight.detach().to(full_logits.device)
 
                     aware_likelihood_dict = {
                         "logits": full_logits,
