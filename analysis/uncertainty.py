@@ -21,6 +21,8 @@ def collapse_logits_by_semantic_axes(logits, embedding_matrix, top_k=200, varian
     Returns:
         Tensor of reduced, semantically collapsed probabilities
     """
+
+    logits = logits.to(embedding_matrix.device)  # 🔧 Brute force fix
     probs = F.softmax(logits, dim=-1)  # [vocab_size]
     top_values, top_indices = torch.topk(probs, k=min(top_k, logits.size(0)))
 
