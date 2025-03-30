@@ -6,14 +6,17 @@ from analysis.uncertainty import compute_uncertainty_scores, compute_aware_uncer
 _model_cache = {}
 _tokenizer_cache = {}
 
+
 def load_model_and_tokenizer(model_name: str):
     if model_name not in _model_cache:
         tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=False)
         model = AutoModelForCausalLM.from_pretrained(
+
             model_name,
             torch_dtype=torch.float16,
             device_map="auto",
-            trust_remote_code=True
+            trust_remote_code=True,
+            attn_implementation="eager"  # Force eager to suppress SDPA warnings for OPT
         )
         model.eval()
         _model_cache[model_name] = model
