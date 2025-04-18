@@ -50,6 +50,12 @@ def run_generation(
     generated = outputs.sequences
     decoded = tokenizer.batch_decode(generated[:, encoded["input_ids"].shape[1]:], skip_special_tokens=True)
 
+    for i, (q, a) in enumerate(zip(questions, decoded)):
+        print(f"\n[Sample {i}]")
+        print(f"Q: {q}")
+        print(f"A: {a}")
+        print("-" * 50)
+
     result = []
     for i, sample in enumerate(batch):
         item = {

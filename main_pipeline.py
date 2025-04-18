@@ -30,7 +30,7 @@ def main(args):
     elif args.dataset == "coqa":
         dataset = load_coqa_dataset()
     elif args.dataset == "triviaqa":
-        dataset = load_triviaqa_dataset(split="validation")
+        dataset = load_triviaqa_dataset(model_name=args.model)
     else:
         raise ValueError(f"Unsupported dataset: {args.dataset}")
 
