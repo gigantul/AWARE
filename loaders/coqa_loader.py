@@ -1,80 +1,56 @@
-# loaders/coqa_loader.py
-
 import os
-import json
-import urllib.request
-from datasets import Dataset, load_from_disk
+from datasets import load_dataset, Dataset
 from transformers import AutoTokenizer
-from config.config import DATA_DIR
 
-def download_raw_coqa():
-    """
-    Downloads the CoQA dev set if it's not already present.
-    """
-    url = "https://nlp.stanford.edu/data/coqa/coqa-dev-v1.0.json"
-    file_path = os.path.join(DATA_DIR, "coqa-dev-v1.0.json")
-    os.makedirs(DATA_DIR, exist_ok=True)
+DATA_DIR = "data"  # Root dir for storing dataset files
 
-    if not os.path.exists(file_path):
-        print("[INFO] Downloading CoQA dataset...")
-        urllib.request.urlretrieve(url, file_path)
-    else:
-        print("[INFO] CoQA dataset already exists.")
-    return file_path
-
-def preprocess_coqa_dataset(model_name, save_path):
+def preprocess_sciq_dataset(model_name, save_path):
     """
-    Tokenizes and formats the CoQA dev set for model inference.
+    Preprocesses SciQ for a given tokenizer and saves it as JSONL.
     """
-    print(f"[INFO] Preprocessing CoQA for model: {model_name}")
+    print(f"[INFO] Preprocessing SciQ for model: {model_name}")
     tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=False)
 
-    raw_path = download_raw_coqa()
-    with open(raw_path, "r") as f:
-        data = json.load(f)["data"]
+    train_data = load_dataset("sciq", split="train")
+    val_data = load_dataset("sciq", split="validation")
 
-    samples = []
-    for entry in data:
-        story = entry["story"]
-        questions = entry["questions"]
-        answers = entry["answers"]
+    # Few-shot context from first 10 train examples
+    few_shot_prompt = "This is a bot that correctly answers questions.\n"
+    for sample in train_data.select(range(10)):
+        few_shot_prompt += f"Question: {sample['question']} Answer: {sample['correct_answer']} "
 
-        for q, a in zip(questions, answers):
-            question = q["input_text"]
-            answer = a["input_text"]
-            turn_id = q["turn_id"]
+    def encode(example):
+        prompt = few_shot_prompt.strip() + f"\n\nQuestion: {example['question']} Answer:"
+        input_ids = tokenizer(prompt, truncation=False, padding=False)["input_ids"]
+        return {
+            "input_ids": input_ids,
+            "prompt": prompt,
+            "question": example["question"],
+            "question_id": example.get("id", example["question"]),
+            "answer": example["correct_answer"]
+        }
 
-            prompt = f"Context: {story}\nQuestion: {question} Answer:"
-            input_ids = tokenizer(prompt, truncation=True, padding=False)["input_ids"]
+    val_data = val_data.map(encode, remove_columns=val_data.column_names)
 
-            samples.append({
-                "question": question,
-                "answer": answer,
-                "prompt": prompt,
-                "question_id": f"{entry['id']}_{turn_id}",
-                "input_ids": input_ids
-            })
+    os.makedirs(save_path, exist_ok=True)
+    json_path = os.path.join(save_path, "sciq.json")
+    val_data.to_json(json_path)
 
-    dataset = Dataset.from_list(samples)
-    dataset.save_to_disk(save_path)
-    print(f"[INFO] Saved CoQA dataset to {save_path}")
+    print(f"[INFO] Saved SciQ JSONL to {json_path}")
 
-def load_coqa_dataset(path=None, model_name=None):
+
+def load_sciq_dataset(path=None, model_name=None):
     """
-    Loads or prepares the CoQA dataset.
-    Args:
-        path (str): Optional override for dataset folder.
-        model_name (str): Required for tokenizer-dependent prompt encoding.
-    Returns:
-        HuggingFace Dataset
+    Loads or prepares SciQ dataset from JSONL.
     """
     if model_name is None:
-        raise ValueError("[ERROR] Model name must be specified for CoQA tokenizer.")
+        raise ValueError("[ERROR] Model name must be specified for SciQ tokenizer.")
 
-    folder_name = f"coqa_{model_name.split('/')[-1]}"
+    folder_name = f"sciq_{model_name.split('/')[-1]}"
     path = path or os.path.join(DATA_DIR, folder_name)
+    json_file = os.path.join(path, "sciq.json")
 
-    if not os.path.exists(path):
-        preprocess_coqa_dataset(model_name, path)
+    if not os.path.exists(json_file):
+        preprocess_sciq_dataset(model_name, path)
 
-    return load_from_disk(path)
+    return load_dataset("json", data_files=json_file, split="train")
