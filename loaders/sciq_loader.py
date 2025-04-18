@@ -2,6 +2,8 @@ import os
 from datasets import load_dataset, load_from_disk
 from transformers import AutoTokenizer
 
+DATA_DIR = "data"  # You can change this to your global data directory
+
 def preprocess_sciq_dataset(model_name, save_path):
     """
     Downloads and prepares the SciQ dataset for a given model's tokenizer.
@@ -36,3 +38,23 @@ def preprocess_sciq_dataset(model_name, save_path):
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     val_data.save_to_disk(save_path)
     print(f"[INFO] Saved SciQ to {save_path}")
+
+def load_sciq_dataset(path=None, model_name=None):
+    """
+    Loads or prepares the SciQ dataset.
+    Args:
+        path (str): Optional override path.
+        model_name (str): Required for tokenizer-dependent prompt encoding.
+    Returns:
+        HuggingFace Dataset
+    """
+    if model_name is None:
+        raise ValueError("[ERROR] Model name must be specified for SciQ tokenizer.")
+
+    folder_name = f"sciq_{model_name.split('/')[-1]}"
+    path = path or os.path.join(DATA_DIR, folder_name)
+
+    if not os.path.exists(path):
+        preprocess_sciq_dataset(model_name, path)
+
+    return load_from_disk(path)
