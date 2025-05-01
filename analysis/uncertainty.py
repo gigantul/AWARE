@@ -8,60 +8,42 @@ import torch.nn.functional as F
 _sbert_cache = {}
 
 # --- NEW: Lexicon collapsing using PCA-style semantic axes ---
-def collapse_logits_by_semantic_axes(logits, embedding_matrix, top_k=200, variance_threshold=0.95):
+def collapse_logits_toward_question(logits, embedding_matrix, question_embedding, top_k=200):
     """
-    Collapse logits across semantically meaningful axes using SVD-based dimensionality reduction.
+    Collapse logits across the semantic direction defined by the question.
 
     Args:
-        logits: [vocab_size] tensor of logit probabilities
-        embedding_matrix: [vocab_size, hidden_size] embedding vectors (tied input/output embeddings)
-        top_k: how many top tokens to consider from the softmax distribution
-        variance_threshold: float, amount of variance to preserve (e.g., 0.95)
+        logits: [vocab_size] tensor of logits
+        embedding_matrix: [vocab_size, hidden_size] matrix
+        question_embedding: [hidden_size] vector
+        top_k: top K tokens to consider
 
     Returns:
-        Tensor of reduced, semantically collapsed probabilities
+        Collapsed probability distribution focused on question relevance.
     """
 
-    logits = logits.to(embedding_matrix.device)  # 🔧 Brute force fix
+    logits = logits.to(embedding_matrix.device)
     probs = F.softmax(logits, dim=-1)  # [vocab_size]
     top_values, top_indices = torch.topk(probs, k=min(top_k, logits.size(0)))
 
-    # Handle cases where there's too little to collapse meaningfully
     if top_values.numel() < 3:
         return probs[top_indices] / probs[top_indices].sum().clamp(min=1e-9)
 
     top_embeddings = embedding_matrix[top_indices]  # [top_k, hidden_size]
 
-    # Center embeddings
-    X = top_embeddings - top_embeddings.mean(dim=0, keepdim=True)
-    U, S, Vh = torch.linalg.svd(X, full_matrices=False)
+    # Project each token embedding onto the question direction
+    question_embedding = question_embedding / question_embedding.norm().clamp(min=1e-9)
+    projections = (top_embeddings @ question_embedding)  # [top_k]
+    projections = projections.clamp(min=0)  # only positive alignment
 
-    if S.sum().item() < 1e-6:
-        return probs[top_indices] / probs[top_indices].sum().clamp(min=1e-9)
+    # Weight token probabilities by their semantic alignment
+    weighted_probs = top_values * projections
+    weighted_probs = weighted_probs / weighted_probs.sum().clamp(min=1e-9)
 
-    # Compute cumulative explained variance
-    explained_variance = (S**2) / (S**2).sum()
-    cumulative_variance = explained_variance.cumsum(0)
-    k_components = (cumulative_variance < variance_threshold).sum().item() + 1
-
-    reduced = X @ Vh[:k_components].T  # [top_k, k_components]
-    rounded = torch.round(reduced * 3)
-    unique, inverse_indices = torch.unique(rounded, dim=0, return_inverse=True)
-
-    if len(unique) <= 1:
-        return probs[top_indices] / probs[top_indices].sum().clamp(min=1e-9)
-
-    collapsed = []
-    for i in range(len(unique)):
-        group_mask = (inverse_indices == i)
-        collapsed.append(top_values[group_mask].sum())
-
-    collapsed_probs_tensor = torch.stack(collapsed)
-    collapsed_probs_tensor = collapsed_probs_tensor / collapsed_probs_tensor.sum().clamp(min=1e-9)
-    return collapsed_probs_tensor
+    return weighted_probs
 
 
-def compute_aware_uncertainty(likelihoods, output):
+def compute_aware_uncertainty(likelihoods: Dict, output: Dict, question_embedding: torch.Tensor) -> float:
     logits = likelihoods.get("logits")
     attentions = output.get("log_attentions")
     embedding_matrix = output.get("embedding_matrix")
@@ -90,7 +72,7 @@ def compute_aware_uncertainty(likelihoods, output):
         weighted_logit = probs[:t+1].transpose(0, 1) @ attn_vec  # [vocab_size]
         weighted_logit = weighted_logit.to(embedding_matrix.device)  # 🔧 critical fix
 
-        collapsed = collapse_logits_by_semantic_axes(weighted_logit, embedding_matrix)
+        collapsed = collapse_logits_toward_question(weighted_logit, embedding_matrix, question_embedding)
         entropy = -(collapsed * torch.log(collapsed.clamp(min=1e-9))).sum()
         aware_scores.append(entropy)
 

@@ -1,5 +1,3 @@
-# main_pipeline.py (streamed, batched, memory-efficient version)
-
 import argparse
 import csv
 import torch
@@ -42,7 +40,14 @@ def main(args):
     uncertainty_methods = ["entropy", "lastde", "lastn_entropy", "logit_gap", "bertsar", "aware"]
 
     print(f"[Step 2] Processing QA pairs in batches of {args.batch_size}...")
+    processed_count = 0
+    max_items = 10 if args.testrun else float('inf')
+
     for batch_idx, batch in enumerate(batchify(list(dataset), args.batch_size)):
+        # Trim batch if it would exceed max_items
+        if processed_count + len(batch) > max_items:
+            batch = batch[:max_items - processed_count]
+
         # 1. Run generation (now handles uncertainty computation internally)
         outputs = run_generation(
             batch,
@@ -88,9 +93,15 @@ def main(args):
                     header_written = True
                 writer.writerow(row)
 
+            processed_count += 1
+
         # 6. Free up memory
         del outputs, batch
         torch.cuda.empty_cache()
+
+        if processed_count >= max_items:
+            print(f"\nTest run complete. Processed {processed_count} QA pairs.")
+            break
 
         if (batch_idx + 1) * args.batch_size % 100 == 0:
             print(f"Processed {(batch_idx + 1) * args.batch_size} questions...")
@@ -105,5 +116,6 @@ if __name__ == "__main__":
     parser.add_argument("--sbert_model", type=str, default="all-MiniLM-L6-v2")
     parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--dataset", type=str, choices=["sciq", "coqa", "triviaqa", "sampleqa"], default="sciq")
+    parser.add_argument("--testrun", action='store_true', help="Run only the first 10 QA pairs for testing")
     args = parser.parse_args()
     main(args)
