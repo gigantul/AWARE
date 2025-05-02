@@ -7,41 +7,62 @@ import torch.nn.functional as F
 # Cache SBERT model to avoid reloading
 _sbert_cache = {}
 
-# --- NEW: Lexicon collapsing using PCA-style semantic axes ---
-def collapse_logits_toward_question(logits, embedding_matrix, question_embedding, top_k=200):
+def collapse_logits_toward_question(
+    logits: torch.Tensor,
+    embedding_matrix: torch.Tensor,
+    question_embedding: torch.Tensor,
+    top_k: int = 50,
+    subspace_rank: int = 6  # Number of orthogonal directions to span the answer space
+) -> torch.Tensor:
     """
-    Collapse logits across the semantic direction defined by the question.
+    Collapses the model’s output distribution into a semantic subspace
+    aligned with the question and its likely answer space.
+
+    Uses a fixed geometric threshold (epsilon) to retain only those tokens
+    whose embeddings lie meaningfully within the constructed subspace.
 
     Args:
-        logits: [vocab_size] tensor of logits
-        embedding_matrix: [vocab_size, hidden_size] matrix
-        question_embedding: [hidden_size] vector
-        top_k: top K tokens to consider
+        logits: Unnormalized logits [vocab_size]
+        embedding_matrix: Token embedding matrix [vocab_size, dim]
+        question_embedding: Query vector [dim]
+        top_k: Number of top-probability tokens to consider
+        subspace_rank: Dimensionality of the semantic answer subspace
 
     Returns:
-        Collapsed probability distribution focused on question relevance.
+        Collapsed distribution over selected tokens (normalized)
     """
 
     logits = logits.to(embedding_matrix.device)
-    probs = F.softmax(logits, dim=-1)  # [vocab_size]
+    probs = F.softmax(logits, dim=-1)
+
+    # Select top-K tokens with highest probability
     top_values, top_indices = torch.topk(probs, k=min(top_k, logits.size(0)))
+    top_embeddings = embedding_matrix[top_indices]  # [top_k, dim]
 
-    if top_values.numel() < 3:
-        return probs[top_indices] / probs[top_indices].sum().clamp(min=1e-9)
+    # Construct answer subspace from question + top token embeddings
+    seed_vectors = [question_embedding] + [top_embeddings[i] for i in range(min(subspace_rank - 1, top_k))]
+    seed_matrix = torch.stack(seed_vectors)  # [r, dim]
 
-    top_embeddings = embedding_matrix[top_indices]  # [top_k, hidden_size]
+    # Orthonormalize to define semantic subspace
+    Q, _ = torch.linalg.qr(seed_matrix.T)  # [dim, r]
+    projection_basis = Q  # [dim, r]
 
-    # Project each token embedding onto the question direction
-    question_embedding = question_embedding / question_embedding.norm().clamp(min=1e-9)
-    projections = (top_embeddings @ question_embedding)  # [top_k]
-    projections = projections.clamp(min=0)  # only positive alignment
+    # Project all top-k embeddings onto subspace and compute residuals
+    projections = (top_embeddings @ projection_basis) @ projection_basis.T
+    residuals = (top_embeddings - projections).norm(dim=-1)
 
-    # Weight token probabilities by their semantic alignment
-    weighted_probs = top_values * projections
-    weighted_probs = weighted_probs / weighted_probs.sum().clamp(min=1e-9)
+    # 🔒 Fixed geometric radius threshold
+    epsilon = 0.8
+    strong_mask = residuals < epsilon
+    if strong_mask.sum() < 1:
+        # fallback: retain closest token
+        strong_mask[torch.argmin(residuals)] = True
 
-    return weighted_probs
+    # Collapse selected tokens into a normalized distribution
+    selected_values = top_values[strong_mask]
+    collapsed = selected_values / selected_values.sum().clamp(min=1e-9)
 
+    return collapsed
 
 def compute_aware_uncertainty(likelihoods: Dict, output: Dict, question_embedding: torch.Tensor) -> float:
     logits = likelihoods.get("logits")
@@ -55,53 +76,74 @@ def compute_aware_uncertainty(likelihoods: Dict, output: Dict, question_embeddin
     logits = logits.float()
     embedding_matrix = embedding_matrix.float()
 
-    last_attn = attentions[-1]
-    if isinstance(last_attn, tuple):
-        last_attn = last_attn[0]
-    if last_attn.ndim != 4:
-        print("⚠️ Unexpected attention shape.")
+    # Compute attention rollout (composed attention across all layers)
+    attention_rollout = None
+    for layer_attn in attentions:
+        if isinstance(layer_attn, tuple):
+            layer_attn = layer_attn[0]  # discard cross-attn if present
+        layer_attn = layer_attn.mean(dim=1).squeeze(0)  # [tgt, src]
+        attention_rollout = layer_attn if attention_rollout is None else layer_attn @ attention_rollout
+
+    # Safety check
+    if attention_rollout.ndim != 2:
+        print("⚠️ Rollout attention shape invalid.")
         return float("nan")
 
-    attn_weights = last_attn.mean(dim=1).squeeze(0)  # [tgt, src]
+    # Softmax on logits (still in vocab space)
     probs = torch.softmax(logits, dim=-1).to(logits.device)
 
     aware_scores = []
     for t in range(probs.shape[0]):
-        attn_vec = attn_weights[t, :t+1] if t > 0 else torch.ones(1, device=logits.device)
+        # Use rolled-up attention for current target token `t`, causal-only
+        attn_vec = attention_rollout[t, :t+1] if t > 0 else torch.ones(1, device=logits.device)
         attn_vec = attn_vec / attn_vec.sum().clamp(min=1e-6)
-        weighted_logit = probs[:t+1].transpose(0, 1) @ attn_vec  # [vocab_size]
-        weighted_logit = weighted_logit.to(embedding_matrix.device)  # 🔧 critical fix
 
+        # Weighted average of past logits based on rollout attention
+        weighted_logit = probs[:t+1].transpose(0, 1) @ attn_vec  # [vocab_size]
+        weighted_logit = weighted_logit.to(embedding_matrix.device)
+
+        # Semantic collapse
         collapsed = collapse_logits_toward_question(weighted_logit, embedding_matrix, question_embedding)
         entropy = -(collapsed * torch.log(collapsed.clamp(min=1e-9))).sum()
         aware_scores.append(entropy)
 
-    return torch.stack(aware_scores).mean().item() if aware_scores else float('nan')
+    return torch.stack(aware_scores).mean().item() if aware_scores else float("nan")
 
-
-def compute_uncertainty_scores(likelihood_dict: Dict, output: Dict, methods: list = ['entropy', 'lastde', 'lastn_entropy', 'logit_gap', 'attentionsar', 'bertsar']) -> Dict:
+def compute_uncertainty_scores(
+    likelihood_dict: Dict,
+    output: Dict,
+    methods: list = ['entropy', 'lastde', 'lastn_entropy', 'logit_gap', 'attentionsar', 'bertsar', 'aware']
+) -> Dict:
     scores = {}
 
     for method in methods:
         try:
-            if method == 'entropy':
-                scores['entropy'] = likelihood_dict['entropy_per_token'].mean().item()
+            if method in ['entropy', 'lastde', 'lastn_entropy']:
+                ent = likelihood_dict.get('entropy_per_token', [])
+                if isinstance(ent, list):
+                    ent = torch.tensor(ent)
+                if ent.numel() == 0:
+                    scores[method] = float("nan")
+                    continue
 
-            elif method == 'lastde':
-                ent = likelihood_dict['entropy_per_token']
-                scores['lastde'] = ent[-1].item() if ent.numel() > 0 else float("nan")
+                if method == 'entropy':
+                    scores['entropy'] = ent.mean().item()
 
-            elif method == 'lastn_entropy':
-                n = 10
-                ent = likelihood_dict['entropy_per_token']
-                scores['lastn_entropy'] = ent[-n:].mean().item() if ent.numel() >= n else ent.mean().item()
+                elif method == 'lastde':
+                    scores['lastde'] = ent[-1].item()
+
+                elif method == 'lastn_entropy':
+                    n = 10
+                    scores['lastn_entropy'] = ent[-n:].mean().item() if ent.numel() >= n else ent.mean().item()
 
             elif method == 'logit_gap':
-                logits = likelihood_dict['logits']
-                if isinstance(logits, tuple): logits = logits[0]
-                if logits.dim() == 3: logits = logits[0]
+                logits = likelihood_dict.get('logits')
+                if isinstance(logits, tuple):
+                    logits = logits[0]
+                if logits is None or logits.dim() == 3:
+                    logits = logits[0]
                 if logits.dim() != 2:
-                    print(f"⚠️ Unexpected logits shape: {logits.shape}")
+                    print(f"⚠️ logit_gap: unexpected logits shape: {logits.shape}")
                     scores['logit_gap'] = float("nan")
                     continue
                 topk = torch.topk(logits, k=2, dim=-1).values
@@ -115,14 +157,19 @@ def compute_uncertainty_scores(likelihood_dict: Dict, output: Dict, methods: lis
                 scores['bertsar'] = compute_bert_sar_uncertainty(likelihood_dict, output)
 
             elif method == 'aware':
-                scores['aware'] = compute_aware_uncertainty(likelihood_dict, output)
+                question_emb = output.get("question_embedding")
+                if question_emb is None:
+                    print("⚠️ Missing question_embedding for AWARE.")
+                    scores['aware'] = float("nan")
+                else:
+                    scores['aware'] = compute_aware_uncertainty(likelihood_dict, output, question_emb)
 
             else:
                 print(f"⚠️ Unknown uncertainty method: {method}")
                 scores[method] = float("nan")
 
-        except IndexError as e:
-            print(f"⚠️ Skipping IndexError: {e}")
+        except Exception as e:
+            print(f"⚠️ Failed computing {method}: {e}")
             scores[method] = float("nan")
 
     return scores
@@ -175,23 +222,29 @@ def compute_bert_sar_uncertainty(likelihoods, output, model_name="all-MiniLM-L6-
     sbert = _sbert_cache[model_name]
 
     try:
-        # Get the tokens (optional fallback)
-        input_text = output.get("input_text", "")
-        answer_text = output.get("generated_text", "")
+        input_text = output.get("input_text", "").strip()
+        answer_text = output.get("generated_text", "").strip()
 
-        # Tokenize into individual words (rough approximation)
+        if not input_text or not answer_text:
+            print(f"⚠️ BERT-SAR skipped: empty input or output. input='{input_text}', answer='{answer_text}'")
+            return float("nan")
+
         tokens = input_text.split()
+        if len(tokens) == 0:
+            print(f"⚠️ BERT-SAR skipped: no tokens in input_text='{input_text}'")
+            return float("nan")
+
         token_embeddings = sbert.encode(tokens, convert_to_tensor=True, normalize_embeddings=True)
         answer_embedding = sbert.encode(answer_text, convert_to_tensor=True, normalize_embeddings=True)
 
-        # Compute cosine similarity between each token and the answer
         similarities = util.pytorch_cos_sim(token_embeddings, answer_embedding).squeeze()
-
-        # Normalize
         similarities = similarities[:len(log_likelihoods)]
-        weights = similarities / similarities.sum().clamp(min=1e-6)
 
-        # Weighted negative log-likelihood
+        if similarities.sum().item() == 0 or similarities.numel() == 0:
+            print(f"⚠️ BERT-SAR warning: similarity sum zero for input='{input_text}'")
+            return float("nan")
+
+        weights = similarities / similarities.sum().clamp(min=1e-6)
         score = -(log_likelihoods[:len(weights)] * weights).sum().item()
 
         return score
