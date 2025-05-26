@@ -67,10 +67,16 @@ def run_generation(
                 log_attention.append(torch.log(1 + torch.clamp(attention_tensor, min=1e-10)))
             item["log_attentions"] = log_attention
 
+        # Convert list of per-step logits into a full tensor if needed
+        if return_logits and isinstance(outputs.scores, list):
+            logits_tensor = torch.stack(outputs.scores, dim=1).squeeze(0)  # [batch_size=1, seq_len, vocab]
+        else:
+            logits_tensor = None
+
         likelihood_dict = {
-            "token_log_likelihoods": sample.get("token_log_likelihoods", torch.tensor([])),
-            "entropy_per_token": sample.get("entropy_per_token", torch.tensor([])),
-            "logits": outputs.scores if return_logits else None
+            "token_log_likelihoods": torch.tensor([]),  # still unused unless you compute them
+            "entropy_per_token": torch.tensor([]),
+            "logits": logits_tensor
         }
 
         model_output = {
