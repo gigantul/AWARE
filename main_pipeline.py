@@ -41,12 +41,9 @@ def main(args):
 
     print(f"[Step 2] Processing QA pairs in batches of {args.batch_size}...")
     processed_count = 0
-    max_items = 10 if args.testrun else float('inf')
+
 
     for batch_idx, batch in enumerate(batchify(list(dataset), args.batch_size)):
-        # Trim batch if it would exceed max_items
-        if processed_count + len(batch) > max_items:
-            batch = batch[:max_items - processed_count]
 
         # 1. Run generation (now handles uncertainty computation internally)
         outputs = run_generation(
