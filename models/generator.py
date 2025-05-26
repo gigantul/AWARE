@@ -14,7 +14,6 @@ def load_model_and_tokenizer(model_name: str):
             torch_dtype=torch.float16,
             device_map="auto",
             trust_remote_code=True,
-            attn_implementation="eager"
         )
         model.eval()
         _model_cache[model_name] = model
@@ -67,15 +66,25 @@ def run_generation(
                 log_attention.append(torch.log(1 + torch.clamp(attention_tensor, min=1e-10)))
             item["log_attentions"] = log_attention
 
-        # Convert list of per-step logits into a full tensor if needed
-        if return_logits and isinstance(outputs.scores, list):
-            logits_tensor = torch.stack(outputs.scores, dim=1).squeeze(0)  # [batch_size=1, seq_len, vocab]
-        else:
-            logits_tensor = None
+        # Compute forward pass to get per-token log likelihood and entropy
+        full_input_ids = torch.cat([
+            encoded["input_ids"][i],
+            generated[i][encoded["input_ids"].shape[1]:]
+        ]).unsqueeze(0).to(model.device)
+
+        with torch.no_grad():
+            forward_out = model(input_ids=full_input_ids, return_dict=True)
+            logits = forward_out.logits.squeeze(0)  # [seq_len, vocab]
+            log_probs = torch.nn.functional.log_softmax(logits, dim=-1)
+            token_ids = full_input_ids[0][1:]  # skip BOS
+            token_log_likelihoods = log_probs[:-1, :].gather(1, token_ids.unsqueeze(-1)).squeeze(-1)
+            entropy_per_token = (-log_probs * log_probs).sum(dim=-1)
+
+        logits_tensor = torch.stack(outputs.scores, dim=0).to(torch.float32) if return_logits and outputs.scores else None
 
         likelihood_dict = {
-            "token_log_likelihoods": torch.tensor([]),  # still unused unless you compute them
-            "entropy_per_token": torch.tensor([]),
+            "token_log_likelihoods": token_log_likelihoods,
+            "entropy_per_token": entropy_per_token,
             "logits": logits_tensor
         }
 
@@ -93,24 +102,19 @@ def run_generation(
                 scores.update(compute_uncertainty_scores(likelihood_dict, model_output, methods=baseline_methods))
 
                 if "aware" in uncertainty_methods:
-                    # Run a full forward pass for AWARE
-                    full_input_ids = generated[i].unsqueeze(0).to(model.device)
-                    with torch.no_grad():
-                        forward_out = model(
-                            input_ids=full_input_ids,
-                            output_attentions=True,
-                            return_dict=True
-                        )
-                    logits = forward_out.logits.squeeze(0).to(torch.float32)
-                    attentions = [a.to(torch.float32) for a in forward_out.attentions]
-
-                    # Use mean pooled question embedding from token IDs
+                    aware_forward = model(
+                        input_ids=full_input_ids,
+                        output_attentions=True,
+                        return_dict=True
+                    )
+                    aware_logits = aware_forward.logits.squeeze(0).to(torch.float32)
+                    aware_attentions = [a.to(torch.float32) for a in aware_forward.attentions]
                     question_tokens = tokenizer(sample["question"], return_tensors="pt", add_special_tokens=False).to(model.device)
                     question_embedding = embedding_matrix[question_tokens["input_ids"].squeeze(0)].mean(dim=0)
 
                     aware_score = compute_aware_uncertainty(
-                        {"logits": logits},
-                        {"log_attentions": attentions, "embedding_matrix": embedding_matrix, "question_embedding": question_embedding},
+                        {"logits": aware_logits},
+                        {"log_attentions": aware_attentions, "embedding_matrix": embedding_matrix, "question_embedding": question_embedding},
                         question_embedding=question_embedding
                     )
                     scores["aware"] = aware_score
