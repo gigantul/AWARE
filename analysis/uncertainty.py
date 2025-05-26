@@ -64,19 +64,15 @@ def collapse_logits_toward_question(
 
     return collapsed
 
-def compute_aware_uncertainty(likelihoods: Dict, output: Dict, question_embedding: torch.Tensor) -> float:
-    logits = likelihoods.get("logits")
-    attentions = output.get("log_attentions")
-    embedding_matrix = output.get("embedding_matrix")
-
-    if logits is None or attentions is None or embedding_matrix is None:
-        print("⚠️ Missing logits, attention, or embeddings for AWARE.")
-        return float("nan")
-
-    logits = logits.float()
-    embedding_matrix = embedding_matrix.float()
-
-    # Compute attention rollout (composed attention across all layers)
+# == INSERTED IAC-BASED TOKEN FILTERING ==
+def compute_iac(attentions: list) -> torch.Tensor:
+    """
+    Compute Incoming Attention Centrality (IAC) for each token based on attention rollout.
+    Args:
+        attentions: List of attention tensors per layer (each [batch, heads, tgt, src])
+    Returns:
+        iac: Tensor of shape [seq_len] with normalized IAC scores
+    """
     attention_rollout = None
     for layer_attn in attentions:
         if isinstance(layer_attn, tuple):
@@ -84,25 +80,46 @@ def compute_aware_uncertainty(likelihoods: Dict, output: Dict, question_embeddin
         layer_attn = layer_attn.mean(dim=1).squeeze(0)  # [tgt, src]
         attention_rollout = layer_attn if attention_rollout is None else layer_attn @ attention_rollout
 
-    # Safety check
-    if attention_rollout.ndim != 2:
-        print("⚠️ Rollout attention shape invalid.")
+    incoming_attention = attention_rollout.sum(dim=0)  # [src_len]
+    iac = incoming_attention / incoming_attention.sum().clamp(min=1e-6)
+    return iac
+
+
+
+# == MODIFIED compute_aware_uncertainty TO APPLY IAC FILTERING ==
+def compute_aware_uncertainty(likelihoods: Dict, output: Dict, question_embedding: torch.Tensor) -> float:
+    logits = likelihoods.get("logits")
+    attentions = output.get("log_attentions")
+    embedding_matrix = output.get("embedding_matrix")
+
+    if logits is None or attentions is None or embedding_matrix is None:
+        print("\u26a0\ufe0f Missing logits, attention, or embeddings for AWARE.")
+        return float("nan")
+
+    logits = logits.float()
+    embedding_matrix = embedding_matrix.float()
+
+    # Compute IAC and prune tokens with low epistemic salience
+    iac = compute_iac(attentions)  # shape [seq_len]
+    threshold = 0.05  # absolute IAC threshold (can be tuned later)
+    valid_indices = torch.nonzero(iac > threshold).squeeze(-1)
+
+    if valid_indices.numel() == 0:
+        print("\u26a0\ufe0f No tokens passed IAC threshold.")
         return float("nan")
 
     # Softmax on logits (still in vocab space)
     probs = torch.softmax(logits, dim=-1).to(logits.device)
 
     aware_scores = []
-    for t in range(probs.shape[0]):
-        # Use rolled-up attention for current target token `t`, causal-only
-        attn_vec = attention_rollout[t, :t+1] if t > 0 else torch.ones(1, device=logits.device)
+    for t in valid_indices:
+        t = t.item()
+        attn_vec = compute_iac(attentions)[:t+1] if t > 0 else torch.ones(1, device=logits.device)
         attn_vec = attn_vec / attn_vec.sum().clamp(min=1e-6)
 
-        # Weighted average of past logits based on rollout attention
         weighted_logit = probs[:t+1].transpose(0, 1) @ attn_vec  # [vocab_size]
         weighted_logit = weighted_logit.to(embedding_matrix.device)
 
-        # Semantic collapse
         collapsed = collapse_logits_toward_question(weighted_logit, embedding_matrix, question_embedding)
         entropy = -(collapsed * torch.log(collapsed.clamp(min=1e-9))).sum()
         aware_scores.append(entropy)

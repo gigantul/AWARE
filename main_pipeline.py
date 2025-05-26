@@ -99,9 +99,6 @@ def main(args):
         del outputs, batch
         torch.cuda.empty_cache()
 
-        if processed_count >= max_items:
-            print(f"\nTest run complete. Processed {processed_count} QA pairs.")
-            break
 
         if (batch_idx + 1) * args.batch_size % 100 == 0:
             print(f"Processed {(batch_idx + 1) * args.batch_size} questions...")
@@ -111,11 +108,9 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", type=str, default=MODEL_NAME)
-    parser.add_argument("--uncertainty_method", type=str, default="lastde")  # kept for legacy
     parser.add_argument("--similarity_method", type=str, default="sbert")
     parser.add_argument("--sbert_model", type=str, default="all-MiniLM-L6-v2")
     parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--dataset", type=str, choices=["sciq", "coqa", "triviaqa", "sampleqa"], default="sciq")
-    parser.add_argument("--testrun", action='store_true', help="Run only the first 10 QA pairs for testing")
     args = parser.parse_args()
     main(args)

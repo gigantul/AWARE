@@ -82,7 +82,6 @@ def run_generation(
                     log_attention.append(torch.log(1 + attention_tensor))
             item["log_attentions"] = log_attention
 
-        # Compute the question embedding (using model's own embeddings)
         question_text = questions[i]
         question_embedding = get_question_embedding_from_model(
             question_text,
@@ -91,7 +90,6 @@ def run_generation(
             device=model.device
         )
 
-        # Prepare for uncertainty calculation
         likelihood_dict = {
             "token_log_likelihoods": sample.get("token_log_likelihoods", torch.tensor([])),
             "entropy_per_token": sample.get("entropy_per_token", torch.tensor([])),
@@ -103,7 +101,7 @@ def run_generation(
             "input_text": prompts[i],
             "log_attentions": item.get("log_attentions", None),
             "embedding_matrix": embedding_matrix,
-            "question_embedding": question_embedding  # <-- Added here
+            "question_embedding": question_embedding
         }
 
         scores = {}
@@ -134,13 +132,14 @@ def run_generation(
                         "input_text": prompts[i],
                         "log_attentions": full_attentions,
                         "embedding_matrix": embedding_matrix_full,
-                        "question_embedding": question_embedding  # <-- Pass here too
+                        "question_embedding": question_embedding
                     }
-                    scores["aware"] = compute_aware_uncertainty(
+                    aware_scores = compute_aware_uncertainty(
                         aware_likelihood_dict,
                         aware_output,
                         question_embedding=question_embedding
                     )
+                    scores.update({f"aware_{k}": v for k, v in aware_scores.items()})
 
                 item["uncertainty_scores"] = scores
             except Exception as e:
@@ -150,3 +149,4 @@ def run_generation(
         result.append(item)
 
     return result
+
