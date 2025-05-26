@@ -1,16 +1,7 @@
-# At top
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from typing import List, Dict
 from analysis.uncertainty import compute_uncertainty_scores, compute_aware_uncertainty
-
-# New: Function to embed question using generator model's own embeddings
-def get_question_embedding_from_model(question_text: str, tokenizer, embedding_matrix: torch.Tensor, device) -> torch.Tensor:
-    tokens = tokenizer(question_text, return_tensors="pt", add_special_tokens=False).to(device)
-    input_ids = tokens["input_ids"].squeeze(0)  # [seq_len]
-    token_embeds = embedding_matrix[input_ids]  # [seq_len, hidden_size]
-    question_embedding = token_embeds.mean(dim=0)  # Simple average
-    return question_embedding
 
 _model_cache = {}
 _tokenizer_cache = {}
@@ -41,7 +32,6 @@ def run_generation(
     model, tokenizer = load_model_and_tokenizer(model_name)
 
     prompts = [sample.get("prompt", f"Question: {sample['question']} Answer:") for sample in batch]
-    questions = [sample['question'] for sample in batch]
     encoded = tokenizer(prompts, return_tensors="pt", padding=True).to(model.device)
 
     with torch.no_grad():
@@ -56,10 +46,9 @@ def run_generation(
 
     generated = outputs.sequences
     decoded = tokenizer.batch_decode(generated[:, encoded["input_ids"].shape[1]:], skip_special_tokens=True)
-
-    result = []
     embedding_matrix = model.get_input_embeddings().weight.detach().to(torch.float32)
 
+    result = []
     for i, sample in enumerate(batch):
         item = {
             "input_ids": encoded["input_ids"][i],
@@ -74,21 +63,9 @@ def run_generation(
             attentions = outputs.attentions
             log_attention = []
             for attention in attentions:
-                if isinstance(attention, torch.Tensor):
-                    attention = torch.clamp(attention, min=1e-10)
-                    log_attention.append(torch.log(1 + attention))
-                else:
-                    attention_tensor = torch.clamp(attention[0], min=1e-10)
-                    log_attention.append(torch.log(1 + attention_tensor))
+                attention_tensor = attention[0] if isinstance(attention, tuple) else attention
+                log_attention.append(torch.log(1 + torch.clamp(attention_tensor, min=1e-10)))
             item["log_attentions"] = log_attention
-
-        question_text = questions[i]
-        question_embedding = get_question_embedding_from_model(
-            question_text,
-            tokenizer,
-            embedding_matrix,
-            device=model.device
-        )
 
         likelihood_dict = {
             "token_log_likelihoods": sample.get("token_log_likelihoods", torch.tensor([])),
@@ -100,8 +77,7 @@ def run_generation(
             "generated_text": decoded[i],
             "input_text": prompts[i],
             "log_attentions": item.get("log_attentions", None),
-            "embedding_matrix": embedding_matrix,
-            "question_embedding": question_embedding
+            "embedding_matrix": embedding_matrix
         }
 
         scores = {}
@@ -111,6 +87,7 @@ def run_generation(
                 scores.update(compute_uncertainty_scores(likelihood_dict, model_output, methods=baseline_methods))
 
                 if "aware" in uncertainty_methods:
+                    # Run a full forward pass for AWARE
                     full_input_ids = generated[i].unsqueeze(0).to(model.device)
                     with torch.no_grad():
                         forward_out = model(
@@ -118,28 +95,19 @@ def run_generation(
                             output_attentions=True,
                             return_dict=True
                         )
-                        full_logits = forward_out.logits.squeeze(0).to(torch.float32)
-                        full_attentions = [a.to(torch.float32) for a in forward_out.attentions]
-                        embedding_matrix_full = model.get_input_embeddings().weight.detach().to(torch.float32)
+                    logits = forward_out.logits.squeeze(0).to(torch.float32)
+                    attentions = [a.to(torch.float32) for a in forward_out.attentions]
 
-                    aware_likelihood_dict = {
-                        "logits": full_logits,
-                        "token_log_likelihoods": None,
-                        "entropy_per_token": None
-                    }
-                    aware_output = {
-                        "generated_text": decoded[i],
-                        "input_text": prompts[i],
-                        "log_attentions": full_attentions,
-                        "embedding_matrix": embedding_matrix_full,
-                        "question_embedding": question_embedding
-                    }
-                    aware_scores = compute_aware_uncertainty(
-                        aware_likelihood_dict,
-                        aware_output,
+                    # Use mean pooled question embedding from token IDs
+                    question_tokens = tokenizer(sample["question"], return_tensors="pt", add_special_tokens=False).to(model.device)
+                    question_embedding = embedding_matrix[question_tokens["input_ids"].squeeze(0)].mean(dim=0)
+
+                    aware_score = compute_aware_uncertainty(
+                        {"logits": logits},
+                        {"log_attentions": attentions, "embedding_matrix": embedding_matrix, "question_embedding": question_embedding},
                         question_embedding=question_embedding
                     )
-                    scores.update({f"aware_{k}": v for k, v in aware_scores.items()})
+                    scores["aware"] = aware_score
 
                 item["uncertainty_scores"] = scores
             except Exception as e:
@@ -149,4 +117,3 @@ def run_generation(
         result.append(item)
 
     return result
-
