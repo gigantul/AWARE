@@ -93,38 +93,43 @@ def compute_aware_uncertainty(likelihoods: Dict, output: Dict, question_embeddin
     embedding_matrix = output.get("embedding_matrix")
 
     if logits is None or attentions is None or embedding_matrix is None:
-        print("\u26a0\ufe0f Missing logits, attention, or embeddings for AWARE.")
+        print("⚠️ Missing logits, attention, or embeddings for AWARE.")
         return float("nan")
 
     logits = logits.float()
     embedding_matrix = embedding_matrix.float()
 
-    # Compute IAC and prune tokens with low epistemic salience
-    iac = compute_iac(attentions)  # shape [seq_len]
-    threshold = 0.05  # absolute IAC threshold (can be tuned later)
-    valid_indices = torch.nonzero(iac > threshold).squeeze(-1)
+    iac_all = compute_iac(attentions)
+    threshold = 0.05
 
-    if valid_indices.numel() == 0:
-        print("\u26a0\ufe0f No tokens passed IAC threshold.")
+    probs = torch.softmax(logits, dim=-1).to(logits.device)
+    aware_scores = []
+
+    for t in range(len(iac_all)):
+        iac_value = iac_all[t].item()
+        if iac_value <= threshold:
+            entropy = 0.0
+        else:
+            attn_vec = iac_all[:t+1]
+            if attn_vec.sum().item() == 0:
+                entropy = 0.0
+            else:
+                attn_vec = attn_vec / attn_vec.sum().clamp(min=1e-6)
+                weighted_logit = probs[:t+1].transpose(0, 1) @ attn_vec
+                weighted_logit = weighted_logit.to(embedding_matrix.device)
+                collapsed = collapse_logits_toward_question(weighted_logit, embedding_matrix, question_embedding)
+                if collapsed.numel() == 0 or torch.isnan(collapsed).any():
+                    entropy = 0.0
+                else:
+                    entropy = -(collapsed * torch.log(collapsed.clamp(min=1e-9))).sum().item()
+        aware_scores.append(torch.tensor(entropy))
+
+    if not aware_scores:
         return float("nan")
 
-    # Softmax on logits (still in vocab space)
-    probs = torch.softmax(logits, dim=-1).to(logits.device)
-
-    aware_scores = []
-    for t in valid_indices:
-        t = t.item()
-        attn_vec = compute_iac(attentions)[:t+1] if t > 0 else torch.ones(1, device=logits.device)
-        attn_vec = attn_vec / attn_vec.sum().clamp(min=1e-6)
-
-        weighted_logit = probs[:t+1].transpose(0, 1) @ attn_vec  # [vocab_size]
-        weighted_logit = weighted_logit.to(embedding_matrix.device)
-
-        collapsed = collapse_logits_toward_question(weighted_logit, embedding_matrix, question_embedding)
-        entropy = -(collapsed * torch.log(collapsed.clamp(min=1e-9))).sum()
-        aware_scores.append(entropy)
-
-    return torch.stack(aware_scores).mean().item() if aware_scores else float("nan")
+    entropy_vector = torch.stack(aware_scores)
+    salient_ratio = (entropy_vector > 0).sum().item() / len(entropy_vector)
+    return entropy_vector.max().item() * salient_ratio
 
 def compute_uncertainty_scores(
     likelihood_dict: Dict,
@@ -177,9 +182,13 @@ def compute_uncertainty_scores(
                 question_emb = output.get("question_embedding")
                 if question_emb is None:
                     print("⚠️ Missing question_embedding for AWARE.")
-                    scores['aware'] = float("nan")
+                    scores[method] = float("nan")
                 else:
-                    scores['aware'] = compute_aware_uncertainty(likelihood_dict, output, question_emb)
+                    val = compute_aware_uncertainty(likelihood_dict, output, question_emb)
+                    if not isinstance(val, float):
+                        raise TypeError("AWARE returned non-float")
+                    scores[method] = val
+
 
             else:
                 print(f"⚠️ Unknown uncertainty method: {method}")
