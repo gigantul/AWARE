@@ -29,7 +29,6 @@ def run_generation(
 ) -> List[Dict]:
 
     model, tokenizer = load_model_and_tokenizer(model_name)
-
     prompts = [sample.get("prompt", f"Question: {sample['question']} Answer:") for sample in batch]
     encoded = tokenizer(prompts, return_tensors="pt", padding=True).to(model.device)
 
@@ -59,71 +58,57 @@ def run_generation(
             item["scores"] = outputs.scores
 
         if return_attentions and hasattr(outputs, 'attentions'):
-            attentions = outputs.attentions
             log_attention = []
-            for attention in attentions:
+            for attention in outputs.attentions:
                 attention_tensor = attention[0] if isinstance(attention, tuple) else attention
                 log_attention.append(torch.log(1 + torch.clamp(attention_tensor, min=1e-10)))
             item["log_attentions"] = log_attention
 
-        # Compute forward pass to get per-token log likelihood and entropy
+        # === Full forward pass ===
         full_input_ids = torch.cat([
             encoded["input_ids"][i],
             generated[i][encoded["input_ids"].shape[1]:]
         ]).unsqueeze(0).to(model.device)
 
         with torch.no_grad():
-            forward_out = model(input_ids=full_input_ids, return_dict=True)
-            logits = forward_out.logits.squeeze(0)  # [seq_len, vocab]
-            log_probs = torch.nn.functional.log_softmax(logits, dim=-1)
-            token_ids = full_input_ids[0][1:]  # skip BOS
-            token_log_likelihoods = log_probs[:-1, :].gather(1, token_ids.unsqueeze(-1)).squeeze(-1)
-            entropy_per_token = (-log_probs * log_probs).sum(dim=-1)
+            forward_out = model(input_ids=full_input_ids, output_attentions=True, return_dict=True)
 
-        logits_tensor = torch.stack(outputs.scores, dim=0).to(torch.float32) if return_logits and outputs.scores else None
+        logits = forward_out.logits.squeeze(0).to(torch.float32)
+        log_probs = torch.nn.functional.log_softmax(logits, dim=-1)
+        token_ids = full_input_ids[0][1:]  # shift to next-token prediction
+        token_log_likelihoods = log_probs[:-1, :].gather(1, token_ids.unsqueeze(-1)).squeeze(-1)
+        entropy_per_token = (-log_probs * log_probs).sum(dim=-1)
+        attentions = [a.to(torch.float32) for a in forward_out.attentions]
 
+        # === Get question embedding ===
+        question_tokens = tokenizer(sample["question"], return_tensors="pt", add_special_tokens=False).to(model.device)
+        question_embedding = embedding_matrix[question_tokens["input_ids"].squeeze(0)].mean(dim=0)
+
+        # === Unified uncertainty scoring ===
         likelihood_dict = {
             "token_log_likelihoods": token_log_likelihoods,
             "entropy_per_token": entropy_per_token,
-            "logits": logits_tensor
+            "logits": logits
         }
 
         model_output = {
             "generated_text": decoded[i],
             "input_text": prompts[i],
-            "log_attentions": item.get("log_attentions", None),
-            "embedding_matrix": embedding_matrix
+            "log_attentions": attentions,
+            "embedding_matrix": embedding_matrix,
+            "question_embedding": question_embedding
         }
 
-        scores = {}
-        if uncertainty_methods:
-            try:
-                baseline_methods = [m for m in uncertainty_methods if m != "aware"]
-                scores.update(compute_uncertainty_scores(likelihood_dict, model_output, methods=baseline_methods))
-
-                if "aware" in uncertainty_methods:
-                    aware_forward = model(
-                        input_ids=full_input_ids,
-                        output_attentions=True,
-                        return_dict=True
-                    )
-                    aware_logits = aware_forward.logits.squeeze(0).to(torch.float32)
-                    aware_attentions = [a.to(torch.float32) for a in aware_forward.attentions]
-                    question_tokens = tokenizer(sample["question"], return_tensors="pt", add_special_tokens=False).to(model.device)
-                    question_embedding = embedding_matrix[question_tokens["input_ids"].squeeze(0)].mean(dim=0)
-
-                    aware_score = compute_aware_uncertainty(
-                        {"logits": aware_logits},
-                        {"log_attentions": aware_attentions, "embedding_matrix": embedding_matrix, "question_embedding": question_embedding},
-                        question_embedding=question_embedding
-                    )
-                    scores["aware"] = aware_score
-
-                item["uncertainty_scores"] = scores
-            except Exception as e:
-                print(f"⚠️ Failed to compute uncertainty scores for sample {i}: {e}")
-                item["uncertainty_scores"] = {}
+        try:
+            scores = compute_uncertainty_scores(
+                likelihood_dict, model_output, methods=uncertainty_methods or []
+            )
+            item["uncertainty_scores"] = scores
+        except Exception as e:
+            print(f"⚠️ Failed to compute uncertainty scores for sample {i}: {e}")
+            item["uncertainty_scores"] = {}
 
         result.append(item)
 
     return result
+
